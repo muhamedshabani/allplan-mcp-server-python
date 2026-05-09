@@ -63,3 +63,7 @@ MCP_PATH=/mcp
 - `get_all_object_names`: returns display names for elements in the current document.
 - `create_cube`: creates a cube in the current document.
 - `create_box`: creates a rectangular cuboid in the current document.
+
+## Notes
+
+- [POST execution exploration](docs/post-execution-exploration.md)
