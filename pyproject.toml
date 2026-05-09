@@ -1,0 +1,22 @@
+[project]
+name = "allplan-mcp-server"
+version = "0.1.0"
+description = "FastMCP bridge for controlling an Allplan Python host."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp==3.2.4",
+]
+
+[project.scripts]
+allplan-mcp = "allplan_mcp.server:main"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/allplan_mcp"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

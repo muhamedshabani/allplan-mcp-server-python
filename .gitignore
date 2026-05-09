@@ -1,0 +1,7 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+utils_log.txt
+registration_result.json
