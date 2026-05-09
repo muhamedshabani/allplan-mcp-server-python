@@ -54,6 +54,8 @@ ALLPLAN_HOST_URL=http://127.0.0.1:5679
 MCP_HOST=127.0.0.1
 MCP_PORT=8000
 MCP_PATH=/mcp
+ALLPLAN_MCP_ENABLE_PYTHON_EXEC=0
+ALLPLAN_MCP_EXEC_TOKEN=
 ```
 
 ## Tools
@@ -63,7 +65,37 @@ MCP_PATH=/mcp
 - `get_all_object_names`: returns display names for elements in the current document.
 - `create_cube`: creates a cube in the current document.
 - `create_box`: creates a rectangular cuboid in the current document.
+- `execute_python`: available only when `ALLPLAN_MCP_ENABLE_PYTHON_EXEC=1`
+  and `ALLPLAN_MCP_EXEC_TOKEN` is set before starting both the Allplan bridge
+  and the MCP server.
 
 ## Notes
 
 - [POST execution exploration](docs/post-execution-exploration.md)
+
+## Development-only exec
+
+The branch now supports a guarded development-only Python execution path for
+local experiments.
+
+Requirements:
+
+```bash
+ALLPLAN_MCP_ENABLE_PYTHON_EXEC=1
+ALLPLAN_MCP_EXEC_TOKEN=your-strong-token
+```
+
+Set those variables before starting:
+
+1. The Allplan `StartPythonHost` PythonPart bridge
+2. The external FastMCP server
+
+Behavior:
+
+- The raw Allplan bridge accepts `POST /execute-python`
+- The external MCP server exposes `execute_python(...)`
+- Both sides require the same token
+- The endpoint remains bound to `127.0.0.1`
+- If the flag or token is missing, the MCP tool is not registered
+
+Keep this disabled when using ngrok or any shared agent setup.

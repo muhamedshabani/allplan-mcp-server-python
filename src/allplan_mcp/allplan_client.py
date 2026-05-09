@@ -16,12 +16,20 @@ class AllplanHostClient:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
 
-    def post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def post(
+        self,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         body = json.dumps(payload or {}).encode("utf-8")
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
         request = Request(
             urljoin(self.base_url, path.lstrip("/")),
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=request_headers,
             method="POST",
         )
 

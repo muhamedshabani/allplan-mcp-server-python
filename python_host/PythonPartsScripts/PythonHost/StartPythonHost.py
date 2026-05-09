@@ -80,7 +80,10 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                 request = json.loads(request_json)
             
             result_json = ""
-            result = invoke_in_ui_thread(lambda: self.request_handler.handle(self.path, request))
+            headers = dict(self.headers.items())
+            result = invoke_in_ui_thread(
+                lambda: self.request_handler.handle(self.path, request, headers)
+            )
 
             if (result != None):
                 result_json = json.dumps(result)
