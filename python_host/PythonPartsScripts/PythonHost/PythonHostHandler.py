@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import ast
+import builtins
 import contextlib
 import io
 import os
@@ -11,6 +13,129 @@ import NemAll_Python_AllplanSettings as AllplanSettings
 import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_BaseElements as AllplanBaseEle
+
+
+BLOCKED_BUILTIN_NAMES = frozenset(
+    {
+        "__import__",
+        "breakpoint",
+        "compile",
+        "delattr",
+        "dir",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "hasattr",
+        "input",
+        "locals",
+        "open",
+        "setattr",
+        "vars",
+    }
+)
+
+ALLOWED_BUILTIN_NAMES = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "enumerate",
+        "Exception",
+        "filter",
+        "float",
+        "int",
+        "isinstance",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "print",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "ValueError",
+        "zip",
+    }
+)
+
+
+class SandboxValidationError(Exception):
+    """Raised when sandbox code violates static validation rules."""
+
+
+class SandboxAstValidator(ast.NodeVisitor):
+    """Rejects obvious escape hatches before code reaches exec()."""
+
+    def visit_Import(self, node):
+        raise SandboxValidationError("import statements are not allowed in execute_python.")
+
+    def visit_ImportFrom(self, node):
+        raise SandboxValidationError("import statements are not allowed in execute_python.")
+
+    def visit_Global(self, node):
+        raise SandboxValidationError("global statements are not allowed in execute_python.")
+
+    def visit_Nonlocal(self, node):
+        raise SandboxValidationError("nonlocal statements are not allowed in execute_python.")
+
+    def visit_ClassDef(self, node):
+        raise SandboxValidationError("class definitions are not allowed in execute_python.")
+
+    def visit_AsyncFunctionDef(self, node):
+        raise SandboxValidationError("async functions are not allowed in execute_python.")
+
+    def visit_Await(self, node):
+        raise SandboxValidationError("await is not allowed in execute_python.")
+
+    def visit_Yield(self, node):
+        raise SandboxValidationError("yield is not allowed in execute_python.")
+
+    def visit_YieldFrom(self, node):
+        raise SandboxValidationError("yield from is not allowed in execute_python.")
+
+    def visit_Attribute(self, node):
+        if node.attr.startswith("_"):
+            raise SandboxValidationError(
+                f"attribute '{node.attr}' is not allowed in execute_python."
+            )
+        self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id.startswith("_"):
+            raise SandboxValidationError(
+                f"name '{node.id}' is not allowed in execute_python."
+            )
+        if isinstance(node.ctx, ast.Load) and node.id in BLOCKED_BUILTIN_NAMES:
+            raise SandboxValidationError(
+                f"builtin '{node.id}' is not allowed in execute_python."
+            )
+        self.generic_visit(node)
+
+
+def _validate_python_code(source: str, mode: str) -> None:
+    try:
+        tree = ast.parse(source, filename="<sandbox>", mode=mode)
+    except SyntaxError as error:
+        raise SandboxValidationError(str(error))
+
+    SandboxAstValidator().visit(tree)
+
+
+def _safe_builtins():
+    return {
+        name: getattr(builtins, name)
+        for name in ALLOWED_BUILTIN_NAMES
+    }
 
 
 class RequestHandler:
@@ -124,8 +249,12 @@ class RequestHandler:
         if result_expression is not None and not isinstance(result_expression, str):
             raise Exception("'result_expression' must be a string when provided.")
 
+        _validate_python_code(code, "exec")
+        if result_expression:
+            _validate_python_code(result_expression, "eval")
+
         exec_scope = {
-            "__builtins__": __builtins__,
+            "__builtins__": _safe_builtins(),
             "coord_input": self.coord_input,
             "AllplanGeo": AllplanGeo,
             "AllplanIFW": AllplanIFW,

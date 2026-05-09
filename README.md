@@ -92,5 +92,8 @@ Behavior:
 - The external MCP server exposes `execute_python(...)`
 - The endpoint remains bound to `127.0.0.1`
 - If the flag is missing, the MCP tool is not registered
+- Imports are blocked by AST validation
+- Private and dunder attribute access is blocked by AST validation
+- Only a restricted builtin whitelist is available at runtime
 
 Keep this disabled when using ngrok or any shared agent setup.
