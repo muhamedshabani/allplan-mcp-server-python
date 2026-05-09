@@ -56,27 +56,6 @@ MCP_PORT=8000
 MCP_PATH=/mcp
 ```
 
-## Expose with ngrok later
-
-Start the server:
-
-```bash
-uv run allplan-mcp
-```
-
-Then tunnel the local HTTP server:
-
-```bash
-ngrok http 8000
-```
-
-Use the ngrok HTTPS URL with `/mcp` appended in your MCP client or agent, for
-example:
-
-```text
-https://your-ngrok-domain.ngrok-free.app/mcp
-```
-
 ## Tools
 
 - `allplan_health`: checks whether the Allplan host is reachable.
