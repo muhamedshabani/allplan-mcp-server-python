@@ -27,15 +27,13 @@ class RequestHandler:
 
         self.coord_input = coord_input
         self.exec_enabled = os.getenv("ALLPLAN_MCP_ENABLE_PYTHON_EXEC", "0") == "1"
-        self.exec_token = os.getenv("ALLPLAN_MCP_EXEC_TOKEN", "")
 
-    def handle(self, path: str, request : dict, headers: dict | None = None):
+    def handle(self, path: str, request : dict):
         """ Handles request from the client allplication
 
         Args:
             path:    url path relative to the base address
             request: request parameters dicitionary
-            headers: request headers
 
         Raises:
             Exception: raised in case if path couldn't be matched to any handler function
@@ -55,7 +53,7 @@ class RequestHandler:
                 return self.handle_create_box(request)
 
             case "/execute-python":
-                return self.handle_execute_python(request, headers or {})
+                return self.handle_execute_python(request)
             
             case _:
                 raise Exception(f"Unknown request path: {path}") 
@@ -108,15 +106,11 @@ class RequestHandler:
 
         AllplanBaseElements.CreateElements(doc, AllplanGeo.Matrix3D(), model_ele_list, [], None)
 
-    def handle_execute_python(self, request: dict, headers: dict):
+    def handle_execute_python(self, request: dict):
         """Executes Python code inside Allplan for local development only."""
 
         if not self.exec_enabled:
             raise Exception("Python execution endpoint is disabled.")
-
-        token = headers.get("X-Allplan-Exec-Token", "")
-        if not self.exec_token or token != self.exec_token:
-            raise Exception("Invalid execution token.")
 
         if not isinstance(request, dict):
             raise Exception("Request body must be a JSON object.")

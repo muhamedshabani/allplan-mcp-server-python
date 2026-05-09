@@ -27,10 +27,6 @@ def _python_exec_enabled() -> bool:
     return os.getenv("ALLPLAN_MCP_ENABLE_PYTHON_EXEC", "0") == "1"
 
 
-def _python_exec_token() -> str:
-    return os.getenv("ALLPLAN_MCP_EXEC_TOKEN", "")
-
-
 @mcp.tool
 def allplan_health() -> dict[str, Any]:
     """Check that the Allplan Python host is reachable."""
@@ -115,7 +111,7 @@ def create_box(length: float, width: float, height: float) -> dict[str, Any]:
     }
 
 
-if _python_exec_enabled() and _python_exec_token():
+if _python_exec_enabled():
 
     @mcp.tool
     def execute_python(
@@ -131,11 +127,7 @@ if _python_exec_enabled() and _python_exec_token():
         if result_expression is not None:
             payload["result_expression"] = result_expression
 
-        return _allplan_client().post(
-            "/execute-python",
-            payload,
-            headers={"X-Allplan-Exec-Token": _python_exec_token()},
-        )
+        return _allplan_client().post("/execute-python", payload)
 
 
 def main() -> None:

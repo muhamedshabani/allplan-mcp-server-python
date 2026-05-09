@@ -55,7 +55,6 @@ MCP_HOST=127.0.0.1
 MCP_PORT=8000
 MCP_PATH=/mcp
 ALLPLAN_MCP_ENABLE_PYTHON_EXEC=0
-ALLPLAN_MCP_EXEC_TOKEN=
 ```
 
 ## Tools
@@ -66,8 +65,6 @@ ALLPLAN_MCP_EXEC_TOKEN=
 - `create_cube`: creates a cube in the current document.
 - `create_box`: creates a rectangular cuboid in the current document.
 - `execute_python`: available only when `ALLPLAN_MCP_ENABLE_PYTHON_EXEC=1`
-  and `ALLPLAN_MCP_EXEC_TOKEN` is set before starting both the Allplan bridge
-  and the MCP server.
 
 ## Notes
 
@@ -82,7 +79,6 @@ Requirements:
 
 ```bash
 ALLPLAN_MCP_ENABLE_PYTHON_EXEC=1
-ALLPLAN_MCP_EXEC_TOKEN=your-strong-token
 ```
 
 Set those variables before starting:
@@ -94,8 +90,7 @@ Behavior:
 
 - The raw Allplan bridge accepts `POST /execute-python`
 - The external MCP server exposes `execute_python(...)`
-- Both sides require the same token
 - The endpoint remains bound to `127.0.0.1`
-- If the flag or token is missing, the MCP tool is not registered
+- If the flag is missing, the MCP tool is not registered
 
 Keep this disabled when using ngrok or any shared agent setup.
