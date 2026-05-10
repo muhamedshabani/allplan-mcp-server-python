@@ -8,38 +8,21 @@ import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_BaseElements as AllplanBaseEle
 
-from .sandbox import SandboxExecutor, SandboxSettings
+from .sandbox import SandboxExecutor
 
 
 class RequestHandler:
-    """ Handles requests from the client application
-    """
+    """Handle bridge requests"""
 
     def __init__(self,
                  coord_input : AllplanIFW.CoordinateInput):
-        """ Create the handler
-
-        Args:
-            coord_input: API object for the coordinate input, element selection, ... in the Allplan view
-        """
+        """Build the handler"""
 
         self.coord_input = coord_input
-        self.sandbox_settings = SandboxSettings.from_environment()
-        self.sandbox_executor = SandboxExecutor(coord_input, self.sandbox_settings)
+        self.sandbox_executor = SandboxExecutor(coord_input)
 
     def handle(self, path: str, request : dict):
-        """ Handles request from the client allplication
-
-        Args:
-            path:    url path relative to the base address
-            request: request parameters dicitionary
-
-        Raises:
-            Exception: raised in case if path couldn't be matched to any handler function
-
-        Returns:
-            response parameters dicitionary
-        """
+        """Route one bridge request"""
 
         match path:
             case "/get-allplan-version":
@@ -58,21 +41,13 @@ class RequestHandler:
                 raise Exception(f"Unknown request path: {path}") 
         
     def handle_get_allplan_version(self, request : dict):
-        """ Handles request to get Allplan version
-
-        Returns:
-            response parameters dicitionary (version)
-        """
+        """Get the Allplan version"""
 
         version = AllplanSettings.AllplanVersion.Version()
         return { "version": version }
 
     def handle_get_all_object_names(self, request : dict):
-        """ Handles request to get all object names in document
-
-        Returns:
-            response parameters dicitionary (names)
-        """
+        """Get object names"""
 
         # get object names
         doc = self.coord_input.GetInputViewDocument()
@@ -83,11 +58,7 @@ class RequestHandler:
         return { "names": names }
 
     def handle_create_box(self, request : dict):
-        """ Handles request to create a cuboid object on default coordinates
-
-        Args:
-            request: request parameters dicitionary (length, width, height)
-        """
+        """Create a box"""
 
         # get request parameters
         length = request["length"]
@@ -106,6 +77,6 @@ class RequestHandler:
         AllplanBaseElements.CreateElements(doc, AllplanGeo.Matrix3D(), model_ele_list, [], None)
 
     def handle_execute_python(self, request: dict):
-        """Executes Python code inside Allplan for local development only."""
+        """Run sandbox code"""
 
         return self.sandbox_executor.execute(request)

@@ -11,11 +11,11 @@ PythonSource = Annotated[str, "Sandbox source text"]
 
 
 class SandboxValidationError(Exception):
-    """Raised when sandbox code violates static validation rules."""
+    """Sandbox validation error"""
 
 
 class SandboxAstValidator(ast.NodeVisitor):
-    """Reject obvious escape hatches before code reaches exec()."""
+    """Block unsafe syntax"""
 
     def visit_Import(self, node: ast.Import) -> None:
         raise SandboxValidationError("import statements are not allowed in execute_python.")
@@ -64,7 +64,7 @@ class SandboxAstValidator(ast.NodeVisitor):
 
 
 class SandboxValidator:
-    """Static validator for execute_python code snippets."""
+    """Validate sandbox code"""
 
     def validate_exec(self, source: PythonSource) -> None:
         self.validate_python_code(source, "exec")
