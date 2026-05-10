@@ -1,10 +1,6 @@
 
 from __future__ import annotations
 
-import ast
-import builtins
-import contextlib
-import io
 import os
 
 import NemAll_Python_Geometry as AllplanGeo
@@ -14,128 +10,7 @@ import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_BaseElements as AllplanBaseEle
 
-
-BLOCKED_BUILTIN_NAMES = frozenset(
-    {
-        "__import__",
-        "breakpoint",
-        "compile",
-        "delattr",
-        "dir",
-        "eval",
-        "exec",
-        "getattr",
-        "globals",
-        "hasattr",
-        "input",
-        "locals",
-        "open",
-        "setattr",
-        "vars",
-    }
-)
-
-ALLOWED_BUILTIN_NAMES = frozenset(
-    {
-        "abs",
-        "all",
-        "any",
-        "bool",
-        "dict",
-        "enumerate",
-        "Exception",
-        "filter",
-        "float",
-        "int",
-        "isinstance",
-        "len",
-        "list",
-        "map",
-        "max",
-        "min",
-        "print",
-        "range",
-        "repr",
-        "reversed",
-        "round",
-        "set",
-        "sorted",
-        "str",
-        "sum",
-        "tuple",
-        "ValueError",
-        "zip",
-    }
-)
-
-
-class SandboxValidationError(Exception):
-    """Raised when sandbox code violates static validation rules."""
-
-
-class SandboxAstValidator(ast.NodeVisitor):
-    """Rejects obvious escape hatches before code reaches exec()."""
-
-    def visit_Import(self, node):
-        raise SandboxValidationError("import statements are not allowed in execute_python.")
-
-    def visit_ImportFrom(self, node):
-        raise SandboxValidationError("import statements are not allowed in execute_python.")
-
-    def visit_Global(self, node):
-        raise SandboxValidationError("global statements are not allowed in execute_python.")
-
-    def visit_Nonlocal(self, node):
-        raise SandboxValidationError("nonlocal statements are not allowed in execute_python.")
-
-    def visit_ClassDef(self, node):
-        raise SandboxValidationError("class definitions are not allowed in execute_python.")
-
-    def visit_AsyncFunctionDef(self, node):
-        raise SandboxValidationError("async functions are not allowed in execute_python.")
-
-    def visit_Await(self, node):
-        raise SandboxValidationError("await is not allowed in execute_python.")
-
-    def visit_Yield(self, node):
-        raise SandboxValidationError("yield is not allowed in execute_python.")
-
-    def visit_YieldFrom(self, node):
-        raise SandboxValidationError("yield from is not allowed in execute_python.")
-
-    def visit_Attribute(self, node):
-        if node.attr.startswith("_"):
-            raise SandboxValidationError(
-                f"attribute '{node.attr}' is not allowed in execute_python."
-            )
-        self.generic_visit(node)
-
-    def visit_Name(self, node):
-        if node.id.startswith("_"):
-            raise SandboxValidationError(
-                f"name '{node.id}' is not allowed in execute_python."
-            )
-        if isinstance(node.ctx, ast.Load) and node.id in BLOCKED_BUILTIN_NAMES:
-            raise SandboxValidationError(
-                f"builtin '{node.id}' is not allowed in execute_python."
-            )
-        self.generic_visit(node)
-
-
-def _validate_python_code(source: str, mode: str) -> None:
-    try:
-        tree = ast.parse(source, filename="<sandbox>", mode=mode)
-    except SyntaxError as error:
-        raise SandboxValidationError(str(error))
-
-    SandboxAstValidator().visit(tree)
-
-
-def _safe_builtins():
-    return {
-        name: getattr(builtins, name)
-        for name in ALLOWED_BUILTIN_NAMES
-    }
+from .sandbox import SandboxExecutor
 
 
 class RequestHandler:
@@ -152,6 +27,7 @@ class RequestHandler:
 
         self.coord_input = coord_input
         self.exec_enabled = os.getenv("ALLPLAN_MCP_ENABLE_PYTHON_EXEC", "0") == "1"
+        self.sandbox_executor = SandboxExecutor(coord_input)
 
     def handle(self, path: str, request : dict):
         """ Handles request from the client allplication
@@ -237,62 +113,4 @@ class RequestHandler:
         if not self.exec_enabled:
             raise Exception("Python execution endpoint is disabled.")
 
-        if not isinstance(request, dict):
-            raise Exception("Request body must be a JSON object.")
-
-        code = request.get("code")
-        result_expression = request.get("result_expression")
-
-        if not isinstance(code, str) or not code.strip():
-            raise Exception("'code' must be a non-empty string.")
-
-        if result_expression is not None and not isinstance(result_expression, str):
-            raise Exception("'result_expression' must be a string when provided.")
-
-        _validate_python_code(code, "exec")
-        if result_expression:
-            _validate_python_code(result_expression, "eval")
-
-        exec_scope = {
-            "__builtins__": _safe_builtins(),
-            "coord_input": self.coord_input,
-            "AllplanGeo": AllplanGeo,
-            "AllplanIFW": AllplanIFW,
-            "AllplanSettings": AllplanSettings,
-            "AllplanBaseElements": AllplanBaseElements,
-            "AllplanBasisElements": AllplanBasisElements,
-            "AllplanBaseEle": AllplanBaseEle,
-        }
-        stdout_buffer = io.StringIO()
-
-        with contextlib.redirect_stdout(stdout_buffer):
-            exec(code, exec_scope, exec_scope)
-
-            if result_expression:
-                result_value = eval(result_expression, exec_scope, exec_scope)
-            else:
-                result_value = exec_scope.get("result")
-
-        return {
-            "ok": True,
-            "stdout": stdout_buffer.getvalue(),
-            "result": self._make_json_safe(result_value),
-        }
-
-    def _make_json_safe(self, value):
-        if value is None or isinstance(value, (bool, int, float, str)):
-            return value
-
-        if isinstance(value, list):
-            return [self._make_json_safe(item) for item in value]
-
-        if isinstance(value, tuple):
-            return [self._make_json_safe(item) for item in value]
-
-        if isinstance(value, dict):
-            return {
-                str(key): self._make_json_safe(item)
-                for key, item in value.items()
-            }
-
-        return repr(value)
+        return self.sandbox_executor.execute(request)
