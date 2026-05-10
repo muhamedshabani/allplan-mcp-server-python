@@ -63,10 +63,19 @@ class SandboxAstValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def validate_python_code(source: PythonSource, mode: SandboxMode) -> None:
-    try:
-        tree = ast.parse(source, filename="<sandbox>", mode=mode)
-    except SyntaxError as error:
-        raise SandboxValidationError(str(error)) from error
+class SandboxValidator:
+    """Static validator for execute_python code snippets."""
 
-    SandboxAstValidator().visit(tree)
+    def validate_exec(self, source: PythonSource) -> None:
+        self.validate_python_code(source, "exec")
+
+    def validate_eval(self, source: PythonSource) -> None:
+        self.validate_python_code(source, "eval")
+
+    def validate_python_code(self, source: PythonSource, mode: SandboxMode) -> None:
+        try:
+            tree = ast.parse(source, filename="<sandbox>", mode=mode)
+        except SyntaxError as error:
+            raise SandboxValidationError(str(error)) from error
+
+        SandboxAstValidator().visit(tree)

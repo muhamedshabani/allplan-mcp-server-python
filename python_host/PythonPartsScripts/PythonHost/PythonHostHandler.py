@@ -1,8 +1,6 @@
 
 from __future__ import annotations
 
-import os
-
 import NemAll_Python_Geometry as AllplanGeo
 import NemAll_Python_IFW_Input as AllplanIFW
 import NemAll_Python_AllplanSettings as AllplanSettings
@@ -10,7 +8,7 @@ import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_BaseElements as AllplanBaseEle
 
-from .sandbox import SandboxExecutor
+from .sandbox import SandboxExecutor, SandboxSettings
 
 
 class RequestHandler:
@@ -26,8 +24,8 @@ class RequestHandler:
         """
 
         self.coord_input = coord_input
-        self.exec_enabled = os.getenv("ALLPLAN_MCP_ENABLE_PYTHON_EXEC", "0") == "1"
-        self.sandbox_executor = SandboxExecutor(coord_input)
+        self.sandbox_settings = SandboxSettings.from_environment()
+        self.sandbox_executor = SandboxExecutor(coord_input, self.sandbox_settings)
 
     def handle(self, path: str, request : dict):
         """ Handles request from the client allplication
@@ -109,8 +107,5 @@ class RequestHandler:
 
     def handle_execute_python(self, request: dict):
         """Executes Python code inside Allplan for local development only."""
-
-        if not self.exec_enabled:
-            raise Exception("Python execution endpoint is disabled.")
 
         return self.sandbox_executor.execute(request)

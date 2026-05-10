@@ -13,7 +13,8 @@ import NemAll_Python_Geometry as AllplanGeo
 import NemAll_Python_IFW_Input as AllplanIFW
 
 from .const import allowed_builtin_names
-from .validator import validate_python_code
+from .settings import SandboxSettings
+from .validator import SandboxValidator
 
 
 SandboxRequest = Annotated[dict[str, Any], "Incoming execute_python request"]
@@ -23,10 +24,20 @@ SandboxResult = Annotated[dict[str, Any], "JSON-safe execution result"]
 class SandboxExecutor:
     """Validate and execute Python against a restricted Allplan scope."""
 
-    def __init__(self, coord_input: AllplanIFW.CoordinateInput) -> None:
+    def __init__(
+        self,
+        coord_input: AllplanIFW.CoordinateInput,
+        settings: SandboxSettings,
+        validator: SandboxValidator | None = None,
+    ) -> None:
         self.coord_input = coord_input
+        self.settings = settings
+        self.validator = validator or SandboxValidator()
 
     def execute(self, request: SandboxRequest) -> SandboxResult:
+        if not self.settings.exec_enabled:
+            raise Exception("Python execution endpoint is disabled.")
+
         if not isinstance(request, dict):
             raise Exception("Request body must be a JSON object.")
 
@@ -39,9 +50,9 @@ class SandboxExecutor:
         if result_expression is not None and not isinstance(result_expression, str):
             raise Exception("'result_expression' must be a string when provided.")
 
-        validate_python_code(code, "exec")
+        self.validator.validate_exec(code)
         if result_expression:
-            validate_python_code(result_expression, "eval")
+            self.validator.validate_eval(result_expression)
 
         exec_scope = {
             "__builtins__": self.safe_builtins(),
