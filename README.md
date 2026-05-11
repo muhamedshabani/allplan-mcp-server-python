@@ -130,27 +130,6 @@ MCP_PORT=8888
 MCP_PATH=/mcp
 ```
 
-## Optional Remote Access with ngrok
-
-You can expose the MCP server with ngrok:
-
-```powershell
-ngrok http 8888
-```
-
-Then use:
-
-```text
-https://your-ngrok-domain.ngrok-free.app/mcp
-```
-
-Important:
-
-- This is only reasonable for trusted private use
-- The current server does not add bearer token authentication
-- `execute_python` is exposed on the MCP server
-- Do not expose this server publicly unless you add your own network or auth controls
-
 ## Available MCP Tools
 
 - `allplan_health`
@@ -205,46 +184,3 @@ Resource URIs:
 - Only a restricted builtin whitelist is available at runtime
 
 This is a local-first setup, not a hardened multi-tenant service.
-
-## Development Setup
-
-### 1. Clone the repository
-
-```powershell
-git clone https://github.com/AlejoDuarte23/allplan-mcp-server-python.git
-cd allplan-mcp-server-python
-```
-
-### 2. Install dependencies
-
-```powershell
-uv sync
-```
-
-### 3. Run the server from source
-
-```powershell
-uv run allplan-mcp
-```
-
-### 4. Lint
-
-```powershell
-uvx ruff check src/allplan_mcp python_host/PythonPartsScripts/PythonHost/PythonHostHandler.py python_host/PythonPartsScripts/PythonHost/sandbox
-```
-
-### 5. Type check
-
-```powershell
-uvx ty check src
-```
-
-### 6. Compile check
-
-```powershell
-python -m py_compile src/allplan_mcp/server.py src/allplan_mcp/skills.py
-```
-
-## Notes
-
-- [POST execution exploration](docs/post-execution-exploration.md)
