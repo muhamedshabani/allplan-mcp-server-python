@@ -1,76 +1,170 @@
 # Allplan MCP Server
 
-FastMCP server that exposes the local Allplan Python host as MCP tools.
+A Model Context Protocol server for ALLPLAN that exposes a local ALLPLAN PythonPart bridge as MCP tools and resources.
 
-The existing Allplan PythonPart starts a small local HTTP host at `127.0.0.1:5679`.
-This package adds a FastMCP server in front of it, so agents can call MCP tools
-over Streamable HTTP at `/mcp`.
+This repository runs a FastMCP server outside ALLPLAN and forwards requests to a PythonPart bridge running inside ALLPLAN on `127.0.0.1:5679`.
 
-## Setup
+## Key Features
 
-```bash
+- HTTP MCP server for ALLPLAN
+- Local bridge to the running ALLPLAN PythonPart host
+- Sandboxed `execute_python` tool for local experiments
+- Bundled MCP skill resources for geometry, rebar, utilities, and API lookup
+- Simple install from source with `uv`
+
+## Prerequisites
+
+- Windows machine with ALLPLAN installed
+- ALLPLAN able to run PythonParts
+- Python 3.11 or newer
+- `uv` installed
+
+Important:
+
+- The ALLPLAN bridge currently binds to `127.0.0.1:5679`
+- The MCP server and ALLPLAN bridge should run on the same machine
+- The MCP server currently exposes HTTP transport at `/mcp`
+
+## Quick Start with Claude Code
+
+### 1. Install `uv`
+
+If `uv` is not installed yet:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### 2. Clone the repository
+
+```powershell
+git clone https://github.com/AlejoDuarte23/allplan-mcp-server-python.git
+cd allplan-mcp-server-python
+```
+
+### 3. Install Python dependencies
+
+```powershell
 uv sync
 ```
 
-Register the Allplan PythonPart bridge on the Windows machine where Allplan is
-installed:
+### 4. Register the ALLPLAN PythonPart bridge
+
+Run on the Windows machine where ALLPLAN is installed:
 
 ```cmd
 utils\register_python_host.cmd
 ```
 
-By default this copies the bridge to:
+For a different ALLPLAN version:
+
+```cmd
+utils\register_python_host.cmd --allplan-version 2025
+```
+
+By default the script copies the bridge to:
 
 ```text
 %USERPROFILE%\Documents\Nemetschek\Allplan\2026\Usr\Local\PythonParts\PythonHost
 %USERPROFILE%\Documents\Nemetschek\Allplan\2026\Usr\Local\PythonPartsScripts\PythonHost
 ```
 
-For a different Allplan version:
+### 5. Start the bridge in ALLPLAN
 
-```cmd
-utils\register_python_host.cmd --allplan-version 2025
-```
+Inside ALLPLAN:
 
-In Allplan, start the `StartPythonHost` PythonPart after registration. It must
-keep running while the MCP server is being used.
+1. Open the PythonParts library
+2. Insert `StartPythonHost`
+3. Keep it running while the MCP server is in use
 
-## Run locally
+### 6. Start the MCP server
 
-```bash
+```powershell
 uv run allplan-mcp
 ```
 
-By default this starts the MCP server at:
+Default MCP URL:
 
 ```text
 http://127.0.0.1:8888/mcp
 ```
 
-Useful environment variables:
+### 7. Add the server to Claude Code
 
-```bash
+```powershell
+claude mcp add --transport http allplan http://127.0.0.1:8888/mcp
+```
+
+Then open a new Claude Code session and ask it to interact with ALLPLAN.
+
+Tip:
+
+- Keep ALLPLAN open
+- Keep `StartPythonHost` running
+- Keep a working document open before starting MCP-driven tasks
+
+## Other Clients
+
+Any MCP client that supports remote HTTP MCP servers can connect to:
+
+```text
+http://127.0.0.1:8888/mcp
+```
+
+Examples:
+
+- Claude Code: use `claude mcp add --transport http ...`
+- VS Code or GitHub Copilot: add a remote HTTP MCP server and use the URL above
+- Other MCP clients: configure the same HTTP endpoint
+
+## Transport
+
+This server currently runs with HTTP transport only.
+
+Default runtime settings:
+
+```text
 ALLPLAN_HOST_URL=http://127.0.0.1:5679
 MCP_HOST=127.0.0.1
 MCP_PORT=8888
 MCP_PATH=/mcp
 ```
 
-## Tools
+## Optional Remote Access with ngrok
 
-- `allplan_health`: checks whether the Allplan host is reachable.
-- `get_allplan_version`: returns the running Allplan version.
-- `get_all_object_names`: returns display names for elements in the current document.
-- `create_cube`: creates a cube in the current document.
-- `create_box`: creates a rectangular cuboid in the current document.
-- `execute_python`: executes sandboxed Python inside the running Allplan host
+You can expose the MCP server with ngrok:
 
-## Skill resources
+```powershell
+ngrok http 8888
+```
 
-Bundled skills are also exposed through MCP resources so clients can discover and read
-them through the protocol.
+Then use:
 
-Simple folder layout:
+```text
+https://your-ngrok-domain.ngrok-free.app/mcp
+```
+
+Important:
+
+- This is only reasonable for trusted private use
+- The current server does not add bearer token authentication
+- `execute_python` is exposed on the MCP server
+- Do not expose this server publicly unless you add your own network or auth controls
+
+## Available MCP Tools
+
+- `allplan_health`
+- `get_allplan_version`
+- `get_all_object_names`
+- `create_cube`
+- `create_box`
+- `execute_python`
+
+## Available MCP Skill Resources
+
+The server also exposes bundled skill resources through MCP.
+
+Skill layout:
 
 ```text
 src/allplan_mcp/allplan_skills/
@@ -102,24 +196,55 @@ Resource URIs:
 - `allplan://skills/{skill_name}/assets/{asset_name}`
 - `allplan://skills/{skill_name}/scripts/{script_name}`
 
-The scripts are simple templates. They are meant to guide generated code and do not
-depend on cross imports between skill folders.
+## Security Notes
+
+- The raw ALLPLAN bridge accepts `POST /execute-python`
+- The MCP server exposes `execute_python(...)`
+- Imports are blocked by AST validation
+- Private and dunder attribute access are blocked by AST validation
+- Only a restricted builtin whitelist is available at runtime
+
+This is a local-first setup, not a hardened multi-tenant service.
+
+## Development Setup
+
+### 1. Clone the repository
+
+```powershell
+git clone https://github.com/AlejoDuarte23/allplan-mcp-server-python.git
+cd allplan-mcp-server-python
+```
+
+### 2. Install dependencies
+
+```powershell
+uv sync
+```
+
+### 3. Run the server from source
+
+```powershell
+uv run allplan-mcp
+```
+
+### 4. Lint
+
+```powershell
+uvx ruff check src/allplan_mcp python_host/PythonPartsScripts/PythonHost/PythonHostHandler.py python_host/PythonPartsScripts/PythonHost/sandbox
+```
+
+### 5. Type check
+
+```powershell
+uvx ty check src
+```
+
+### 6. Compile check
+
+```powershell
+python -m py_compile src/allplan_mcp/server.py src/allplan_mcp/skills.py
+```
 
 ## Notes
 
 - [POST execution exploration](docs/post-execution-exploration.md)
-
-## Sandboxed exec
-
-The bridge exposes a sandboxed Python execution path for local experiments.
-
-Behavior:
-
-- The raw Allplan bridge accepts `POST /execute-python`
-- The external MCP server exposes `execute_python(...)`
-- The endpoint remains bound to `127.0.0.1`
-- Imports are blocked by AST validation
-- Private and dunder attribute access is blocked by AST validation
-- Only a restricted builtin whitelist is available at runtime
-
-Do not expose `execute_python` through ngrok or a shared agent setup.
