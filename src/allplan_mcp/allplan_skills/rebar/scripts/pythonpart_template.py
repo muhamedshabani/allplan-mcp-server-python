@@ -1,32 +1,37 @@
-"""Rebar PythonPart template
+"""Rebar PythonPart template.
 
-Copy this file as a starting point
-Replace the placeholder geometry and placement values
-Keep the final PythonPart self contained
+Copy this file as a starting point for generated ALLPLAN PythonPart code.
+Keep the final PythonPart self contained.
 
-Definition guide
-- BendingShape(Point3D, diameter, steel_grade, concrete_grade) for straight bars
-- BendingShape(Polyline3D, VecDoubleList, diameter, steel_grade, concrete_grade, bending_shape_type) for bent bars
-- BarPlacement(position_number, bar_count, dist_vec, start_point, end_point, bending_shape) for single and linear bars
-- LinearBarPlacementBuilder.create_linear_bar_placement_from_to_by_dist for spacing driven layouts
-- LinearBarPlacementBuilder.create_linear_bar_placement_from_to_by_count for count driven layouts
+Core pattern:
+- define host dimensions and rebar globals
+- build local BendingShape objects
+- move or place those shapes into the host coordinate system
+- return concrete and reinforcement in one CreateElementResult
 """
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any
 
 
-PointList3D = Annotated[list[tuple[float, float, float]], "3D centerline points in model units"]
-PointList2D = Annotated[list[tuple[float, float]], "2D centerline points in model units"]
+Point3DLike = Annotated[tuple[float, float, float], "3D point in model units"]
 RebarObject = Annotated[Any, "ALLPLAN reinforcement object"]
-HostElement = Annotated[Any, "ALLPLAN host element"]
+ShapeObject = Annotated[Any, "ALLPLAN BendingShape object"]
 
 
 def validate_positive(value: float, name: str) -> float:
     number = float(value)
     if number <= 0:
         raise ValueError(f"{name} must be greater than zero")
+    return number
+
+
+def validate_non_negative(value: float, name: str) -> float:
+    number = float(value)
+    if number < 0:
+        raise ValueError(f"{name} must be zero or greater")
     return number
 
 
@@ -37,170 +42,391 @@ def validate_count(value: int, name: str) -> int:
     return count
 
 
-def create_bar_2d(
-    position: Annotated[int, "Mark number"],
-    polyline: PointList2D,
-    diameter: Annotated[float, "Bar diameter"],
-    steel_grade: Annotated[int, "Steel grade id"],
-    hook_start: Annotated[float, "Start hook length"] = 0.0,
-    hook_end: Annotated[float, "End hook length"] = 0.0,
+def validate_clear_length(length: float, name: str) -> float:
+    clear_length = validate_positive(length, name)
+    if clear_length <= 1e-9:
+        raise ValueError(f"{name} is too small after cover is applied")
+    return clear_length
+
+
+def p(geo: Any, x: float, y: float, z: float) -> Any:
+    return geo.Point3D(float(x), float(y), float(z))
+
+
+def vec(geo: Any, x: float, y: float, z: float) -> Any:
+    return geo.Vector3D(float(x), float(y), float(z))
+
+
+def polyline3d(geo: Any, points: list[Point3DLike]) -> Any:
+    line = geo.Polyline3D()
+    for x, y, z in points:
+        line += p(geo, x, y, z)
+    return line
+
+
+def bending_rollers(geo: Any, points: list[Point3DLike], roller: float = 0.0) -> Any:
+    segment_count = max(len(points) - 1, 1)
+    return geo.VecDoubleList([float(roller)] * segment_count)
+
+
+def straight_bar_shape_x(
+    geo: Any,
+    reinf: Any,
+    length: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> ShapeObject:
+    """Create a local straight bar along X."""
+
+    validate_clear_length(length, "length")
+    validate_positive(diameter, "diameter")
+    points = [(0.0, 0.0, 0.0), (float(length), 0.0, 0.0)]
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.LongitudinalBar,
+    )
+
+
+def straight_bar_shape_y(
+    geo: Any,
+    reinf: Any,
+    length: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> ShapeObject:
+    """Create a local straight bar along Y."""
+
+    validate_clear_length(length, "length")
+    validate_positive(diameter, "diameter")
+    points = [(0.0, 0.0, 0.0), (0.0, float(length), 0.0)]
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.LongitudinalBar,
+    )
+
+
+def straight_bar_shape_z(
+    geo: Any,
+    reinf: Any,
+    length: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> ShapeObject:
+    """Create a local straight bar along Z."""
+
+    validate_clear_length(length, "length")
+    validate_positive(diameter, "diameter")
+    points = [(0.0, 0.0, 0.0), (0.0, 0.0, float(length))]
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.LongitudinalBar,
+    )
+
+
+def closed_rect_tie_shape_yz(
+    geo: Any,
+    reinf: Any,
+    width_y: float,
+    height_z: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> ShapeObject:
+    """Create a local rectangular tie in the YZ plane for beam stirrups."""
+
+    validate_clear_length(width_y, "width_y")
+    validate_clear_length(height_z, "height_z")
+    validate_positive(diameter, "diameter")
+    points = [
+        (0.0, 0.0, 0.0),
+        (0.0, float(width_y), 0.0),
+        (0.0, float(width_y), float(height_z)),
+        (0.0, 0.0, float(height_z)),
+        (0.0, 0.0, 0.0),
+    ]
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.Stirrup,
+    )
+
+
+def closed_rect_tie_shape_xy(
+    geo: Any,
+    reinf: Any,
+    width_x: float,
+    depth_y: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> ShapeObject:
+    """Create a local rectangular tie in the XY plane for column or pedestal ties."""
+
+    validate_clear_length(width_x, "width_x")
+    validate_clear_length(depth_y, "depth_y")
+    validate_positive(diameter, "diameter")
+    points = [
+        (0.0, 0.0, 0.0),
+        (float(width_x), 0.0, 0.0),
+        (float(width_x), float(depth_y), 0.0),
+        (0.0, float(depth_y), 0.0),
+        (0.0, 0.0, 0.0),
+    ]
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.Stirrup,
+    )
+
+
+def circular_hoop_shape(
+    geo: Any,
+    reinf: Any,
+    radius: float,
+    diameter: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+    segment_count: int = 32,
+) -> ShapeObject:
+    """Create a local circular hoop in the XY plane."""
+
+    validate_clear_length(radius, "radius")
+    validate_positive(diameter, "diameter")
+    validate_count(segment_count, "segment_count")
+    points: list[Point3DLike] = []
+    for index in range(segment_count + 1):
+        angle = 2.0 * math.pi * index / segment_count
+        points.append((radius * math.cos(angle), radius * math.sin(angle), 0.0))
+
+    return reinf.BendingShape(
+        polyline3d(geo, points),
+        bending_rollers(geo, points),
+        diameter,
+        steel_grade,
+        concrete_grade,
+        reinf.BendingShapeType.Stirrup,
+    )
+
+
+def single_shape_placement(
+    geo: Any,
+    reinf: Any,
+    position: int,
+    shape: ShapeObject,
 ) -> RebarObject:
-    """Template for a 2D bar"""
+    """Place one already-positioned shape."""
 
     validate_count(position, "position")
-    validate_positive(diameter, "diameter")
-    validate_positive(len(polyline), "polyline point count")
-
-    # Runtime import pattern
-    # import NemAll_Python_Geometry as AllplanGeo
-    # import NemAll_Python_Reinforcement as AllplanReinf
-    #
-    # Convert the 2D points into the expected ALLPLAN polyline
-    # Create a BendingShape
-    # Apply hook lengths with SetHookLengthStart and SetHookLengthEnd when needed
-    # Create and return a BarPlacement
-
-    raise NotImplementedError("Template only")
+    return reinf.BarPlacement(
+        position,
+        1,
+        vec(geo, 0.0, 0.0, 0.0),
+        p(geo, 0.0, 0.0, 0.0),
+        p(geo, 0.0, 0.0, 0.0),
+        shape,
+    )
 
 
-def create_bar_3d(
-    position: Annotated[int, "Mark number"],
-    path: PointList3D,
-    diameter: Annotated[float, "Bar diameter"],
-    steel_grade: Annotated[int, "Steel grade id"],
+def linear_by_spacing(
+    builder: Any,
+    rule: Any,
+    geo: Any,
+    position: int,
+    shape: ShapeObject,
+    start: Point3DLike,
+    end: Point3DLike,
+    spacing: float,
+    cover_start: float = 0.0,
+    cover_end: float = 0.0,
+    global_move: bool = True,
 ) -> RebarObject:
-    """Template for a 3D bar"""
+    """Place repeated bars by spacing using ALLPLAN's linear builder."""
 
     validate_count(position, "position")
-    validate_positive(diameter, "diameter")
-    validate_positive(len(path), "path point count")
+    validate_positive(spacing, "spacing")
+    validate_non_negative(cover_start, "cover_start")
+    validate_non_negative(cover_end, "cover_end")
+    return builder.create_linear_bar_placement_from_to_by_dist(
+        position,
+        shape,
+        p(geo, *start),
+        p(geo, *end),
+        cover_start,
+        cover_end,
+        spacing,
+        rule.AdditionalCover,
+        global_move,
+    )
 
-    # Runtime import pattern
-    # import NemAll_Python_Geometry as AllplanGeo
-    # import NemAll_Python_Reinforcement as AllplanReinf
-    #
-    # Build Polyline3D from the path
-    # Create the BendingShape
-    # Create and return a BarPlacement
 
-    raise NotImplementedError("Template only")
-
-
-def create_linear_bar_placement(
-    bending_shape: RebarObject,
-    start_point: Annotated[tuple[float, float, float], "Placement start point"],
-    end_point: Annotated[tuple[float, float, float], "Placement end point"],
-    bar_count: Annotated[int, "Number of bars"] | None = None,
-    spacing: Annotated[float, "Spacing between bars"] | None = None,
+def linear_by_count(
+    builder: Any,
+    rule: Any,
+    geo: Any,
+    position: int,
+    shape: ShapeObject,
+    start: Point3DLike,
+    end: Point3DLike,
+    bar_count: int,
+    cover_start: float = 0.0,
+    cover_end: float = 0.0,
+    global_move: bool = True,
 ) -> RebarObject:
-    """Template for repeated bars"""
+    """Place repeated bars by count using ALLPLAN's linear builder."""
 
-    if bar_count is None and spacing is None:
-        raise ValueError("Provide bar_count or spacing")
-
-    if bar_count is not None:
-        validate_count(bar_count, "bar_count")
-    if spacing is not None:
-        validate_positive(spacing, "spacing")
-
-    # Runtime import pattern
-    # import NemAll_Python_Geometry as AllplanGeo
-    # import NemAll_Python_Reinforcement as AllplanReinf
-    #
-    # Build the placement line
-    # Use BarPlacement directly or a standard builder helper
-    # Return the created placement
-
-    raise NotImplementedError("Template only")
+    validate_count(position, "position")
+    validate_count(bar_count, "bar_count")
+    validate_non_negative(cover_start, "cover_start")
+    validate_non_negative(cover_end, "cover_end")
+    return builder.create_linear_bar_placement_from_to_by_count(
+        position,
+        shape,
+        p(geo, *start),
+        p(geo, *end),
+        cover_start,
+        cover_end,
+        bar_count,
+        rule.AdditionalCover,
+        global_move,
+    )
 
 
-def create_mesh_placement(
-    length_direction: Annotated[tuple[float, float, float], "Length direction vector"],
-    width_direction: Annotated[tuple[float, float, float], "Width direction vector"],
-    spacing_length: Annotated[float, "Length direction spacing"],
-    count_length: Annotated[int, "Length direction count"],
-    spacing_width: Annotated[float, "Width direction spacing"],
-    count_width: Annotated[int, "Width direction count"],
-) -> RebarObject:
-    """Template for planar mesh reinforcement"""
+def footing_bottom_mats(
+    geo: Any,
+    reinf: Any,
+    builder: Any,
+    rule: Any,
+    length: float,
+    width: float,
+    cover: float,
+    diameter_x: float,
+    diameter_y: float,
+    spacing_x: float,
+    spacing_y: float,
+    steel_grade: int = -1,
+    concrete_grade: int = -1,
+) -> list[RebarObject]:
+    """Create bottom X and Y mat placements for a footing, cap, or slab."""
 
-    validate_positive(spacing_length, "spacing_length")
-    validate_count(count_length, "count_length")
-    validate_positive(spacing_width, "spacing_width")
-    validate_count(count_width, "count_width")
+    validate_positive(length, "length")
+    validate_positive(width, "width")
+    validate_non_negative(cover, "cover")
 
-    # Runtime import pattern
-    # import NemAll_Python_Reinforcement as AllplanReinf
-    #
-    # Create MeshPlacement or PlaneMeshPlacement
-    # Configure the two mesh directions
-    # Return the created mesh object
+    x0 = cover
+    x1 = length - cover
+    y0 = cover
+    y1 = width - cover
+    bottom_z_x = cover + diameter_x / 2.0
+    bottom_z_y = cover + diameter_x + diameter_y / 2.0
 
-    raise NotImplementedError("Template only")
+    bottom_x_shape = straight_bar_shape_x(geo, reinf, x1 - x0, diameter_x, steel_grade, concrete_grade)
+    bottom_x = linear_by_spacing(
+        builder,
+        rule,
+        geo,
+        1,
+        bottom_x_shape,
+        (x0, y0, bottom_z_x),
+        (x0, y1, bottom_z_x),
+        spacing_y,
+    )
 
+    bottom_y_shape = straight_bar_shape_y(geo, reinf, y1 - y0, diameter_y, steel_grade, concrete_grade)
+    bottom_y = linear_by_spacing(
+        builder,
+        rule,
+        geo,
+        2,
+        bottom_y_shape,
+        (x0, y0, bottom_z_y),
+        (x1, y0, bottom_z_y),
+        spacing_x,
+    )
 
-def rebar_set_properties(
-    rebar: RebarObject,
-    layer: Annotated[str | None, "Target layer"] = None,
-    pen: Annotated[int | None, "Pen index"] = None,
-    color: Annotated[int | None, "Color index"] = None,
-    material: Annotated[int | None, "Material id"] = None,
-) -> None:
-    """Template for common properties"""
-
-    # Set only the properties you actually need
-    # Some properties may live on common properties or attribute services
-    # The exact API shape can vary by ALLPLAN version
-    return None
-
-
-def place_rebar_on_element(
-    rebar: RebarObject,
-    host_element: HostElement,
-) -> None:
-    """Template for host association"""
-
-    # Use the relevant attachment or association service
-    # The exact service depends on the element type and workflow
-    return None
-
-
-def generate_bending_schedule(
-    bars: Annotated[list[RebarObject], "Created bar objects"],
-) -> list[dict[str, Any]]:
-    """Template for schedule rows"""
-
-    # Walk through the created bars
-    # Read geometry from the BendingShape
-    # Read diameter, hooks, count, and position number
-    # Return plain Python rows for CSV or table export
-    return []
+    return [bottom_x, bottom_y]
 
 
-def export_rebar_to_ifc(
-    bars: Annotated[list[RebarObject], "Created bar objects"],
-    filename: Annotated[str, "Target IFC path"],
-) -> None:
-    """Template for export flow"""
-
-    # Use the project export service that matches your environment
-    # Reinforcement export may require project settings or licensed modules
-    return None
+def append_rebars(model_ele_list: Any, rebars: list[RebarObject]) -> None:
+    for rebar in rebars:
+        model_ele_list.append(rebar)
 
 
 def create_element(build_ele, doc):
-    # Import ALLPLAN modules at runtime
-    # Example
+    # Full PythonPart imports:
     # import NemAll_Python_Geometry as AllplanGeo
     # import NemAll_Python_Reinforcement as AllplanReinf
+    # import NemAll_Python_BaseElements as AllplanBaseElements
+    # import StdReinfShapeBuilder.LinearBarPlacementBuilder as LinearBarBuilder
     # from CreateElementResult import CreateElementResult
+    # from StdReinfShapeBuilder.LinearBarPlacementBuilder import StartEndPlacementRule
     # from TypeCollections.ModelEleList import ModelEleList
 
-    # Suggested flow
-    # 1. Build one BendingShape
-    # 2. Build one placement
-    # 3. Apply properties
-    # 4. Append to ModelEleList
-    # 5. Return CreateElementResult
+    # Global dimensions and rebar defaults:
+    length = 3000.0
+    width = 2000.0
+    height = 600.0
+    cover = 50.0
+    diameter_main = 16.0
+    diameter_secondary = 12.0
+    spacing_main = 150.0
+    spacing_secondary = 200.0
+    steel_grade = -1
+    concrete_grade = -1
+
+    validate_positive(length, "length")
+    validate_positive(width, "width")
+    validate_positive(height, "height")
+    validate_non_negative(cover, "cover")
+
+    # Example footing or slab flow:
+    # common_properties = AllplanBaseElements.CommonProperties()
+    # common_properties.GetGlobalProperties()
+    # placement = AllplanGeo.AxisPlacement3D(
+    #     p(AllplanGeo, 0.0, 0.0, 0.0),
+    #     vec(AllplanGeo, 1.0, 0.0, 0.0),
+    #     vec(AllplanGeo, 0.0, 0.0, 1.0),
+    # )
+    # host_brep = AllplanGeo.BRep3D.CreateCuboid(placement, length, width, height)
+    # model_ele_list = ModelEleList(common_properties)
+    # model_ele_list.append_geometry_3d(host_brep)
+    #
+    # rebar_list = footing_bottom_mats(
+    #     AllplanGeo,
+    #     AllplanReinf,
+    #     LinearBarBuilder,
+    #     StartEndPlacementRule,
+    #     length,
+    #     width,
+    #     cover,
+    #     diameter_main,
+    #     diameter_secondary,
+    #     spacing_main,
+    #     spacing_secondary,
+    #     steel_grade,
+    #     concrete_grade,
+    # )
+    # append_rebars(model_ele_list, rebar_list)
+    # return CreateElementResult(elements=model_ele_list)
 
     raise NotImplementedError("Template only")

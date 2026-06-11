@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import io
+import math
 from typing import Annotated, Any
 
 import NemAll_Python_AllplanSettings as AllplanSettings
@@ -11,6 +12,13 @@ import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_Geometry as AllplanGeo
 import NemAll_Python_IFW_Input as AllplanIFW
+import NemAll_Python_Reinforcement as AllplanReinf
+import StdReinfShapeBuilder.GeneralReinfShapeBuilder as GeneralShapeBuilder
+import StdReinfShapeBuilder.LinearBarPlacementBuilder as LinearBarBuilder
+from StdReinfShapeBuilder.ConcreteCoverProperties import ConcreteCoverProperties
+from StdReinfShapeBuilder.LinearBarPlacementBuilder import StartEndPlacementRule
+from StdReinfShapeBuilder.ReinforcementShapeProperties import ReinforcementShapeProperties
+from Utils.RotationUtil import RotationUtil
 
 from .const import allowed_builtin_names
 from .validator import SandboxValidator
@@ -57,6 +65,14 @@ class SandboxExecutor:
             "AllplanBaseElements": AllplanBaseElements,
             "AllplanBasisElements": AllplanBasisElements,
             "AllplanBaseEle": AllplanBaseEle,
+            "AllplanReinf": AllplanReinf,
+            "ConcreteCoverProperties": ConcreteCoverProperties,
+            "GeneralShapeBuilder": GeneralShapeBuilder,
+            "LinearBarBuilder": LinearBarBuilder,
+            "ReinforcementShapeProperties": ReinforcementShapeProperties,
+            "RotationUtil": RotationUtil,
+            "StartEndPlacementRule": StartEndPlacementRule,
+            "math": math,
         }
         stdout_buffer = io.StringIO()
 

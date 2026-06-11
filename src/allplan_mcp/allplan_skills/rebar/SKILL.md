@@ -1,234 +1,275 @@
 ---
 name: allplan-rebar
-description: Use this skill when the agent needs to write ALLPLAN PythonPart code for reinforcement shapes and bar placements
+description: Use this skill when the agent needs to write ALLPLAN PythonPart code for reinforcement shapes, placements, and reinforced concrete elements
 ---
 
 # ALLPLAN rebar
 
-Use this skill for bending shapes, bar placements, mesh placements, and bending schedule style outputs
+Use this skill when the output must create 3D concrete elements and reinforcement, not just describe them.
 
-## Executive summary
+The agent should work from snippets and contracts:
 
-ALLPLAN PythonParts has strong reinforcement support
-The core object is `BendingShape` for geometry, diameter, steel grade, and hooks
-The main placement objects are `BarPlacement`, `ExtrudeBarPlacement`, `SweepBarPlacement`, `MeshPlacement`, and `PlaneMeshPlacement`
-The API also includes helpers for standard bar and mesh catalogs through `ReinforcementSettings`
-Use this skill when the agent needs to turn reinforcement intent into PythonPart code instead of only describing it
+1. Define the host concrete geometry.
+2. Define global rebar values once.
+3. Build each `BendingShape` in a local coordinate system.
+4. Place the shape with `BarPlacement` or `LinearBarPlacementBuilder`.
+5. Return concrete and reinforcement together through `CreateElementResult`.
 
 ## Official references
 
-- Reinforcement placement
+- Reinforcement placement:
   - <https://pythonparts.allplan.com/2025/manual/features/reinforcement/placement/>
-  - Use for single, linear, radial, circumferential, and extrusion placement patterns
-
-- Reinforcement shape definition
+  - Use for single placements, linear placements, regions, polygonal placement, extrude, sweep, and circular placement.
+- Reinforcement shape definition:
   - <https://pythonparts.allplan.com/2025/manual/features/reinforcement/shape_definition/>
-  - Use for `BendingShape` constructors and shape types
-
-- BarPlacement API
+  - Use for `BendingShape`, `GeneralReinfShapeBuilder`, `ReinforcementShapeBuilder`, hooks, rollers, and local rotations.
+- `BendingShape` API:
+  - <https://pythonparts.allplan.com/2026/api_reference/InterfaceStubs/NemAll_Python_Reinforcement/BendingShape/>
+  - Use for exact constructor overloads.
+- `BarPlacement` API:
   - <https://pythonparts.allplan.com/2023/api_reference/InterfaceStubs/NemAll_Python_Reinforcement/BarPlacement/>
-  - Use for exact constructor signatures
-
-- CircularAreaElement API
+  - Use for exact constructor overloads.
+- `CircularAreaElement` API:
   - <https://pythonparts.allplan.com/2026/api_reference/InterfaceStubs/NemAll_Python_Reinforcement/CircularAreaElement/>
-  - Use for circumferential pile or cage style reinforcement
-
-- Solids
+  - Use for circular pile or cage style reinforcement.
+- Solids:
   - <https://pythonparts.allplan.com/2026/manual/features/geometry/solids/>
-  - Use when the host beam, pile cap, or pile geometry also needs to be created
-
-- BRep3D API
-  - <https://pythonparts.allplan.com/2024/api_reference/InterfaceStubs/NemAll_Python_Geometry/BRep3D/>
-  - Use for exact cuboid and cylinder geometry calls
-
-- AxisPlacement3D API
-  - <https://pythonparts.allplan.com/2026/api_reference/InterfaceStubs/NemAll_Python_Geometry/AxisPlacement3D/>
-  - Use for local placement systems for host geometry
+  - Use when the host beam, footing, pile cap, pile, pedestal, column, or slab also needs to be created.
 
 ## Asset pack
 
-Read these asset notes before writing non-trivial reinforcement code
+Read these in order for non-trivial reinforcement:
 
 - `assets/shape-definition.md`
 - `assets/placement-patterns.md`
+- `assets/structural-recipes.md`
 - `assets/beam-orchestration.md`
 - `assets/pile-and-pile-cap-orchestration.md`
 - `assets/catalogs-and-meshes.md`
 
-## Rebar definitions
+## Runtime imports
 
-Define the shorthand once per script
+Use this import block in full PythonPart scripts:
 
 ```python
 import NemAll_Python_Geometry as AllplanGeo
 import NemAll_Python_Reinforcement as AllplanReinf
+import NemAll_Python_BaseElements as AllplanBaseElements
+
+import StdReinfShapeBuilder.GeneralReinfShapeBuilder as GeneralShapeBuilder
+import StdReinfShapeBuilder.LinearBarPlacementBuilder as LinearBarBuilder
+
+from CreateElementResult import CreateElementResult
+from StdReinfShapeBuilder.ConcreteCoverProperties import ConcreteCoverProperties
+from StdReinfShapeBuilder.LinearBarPlacementBuilder import StartEndPlacementRule
+from StdReinfShapeBuilder.ReinforcementShapeProperties import ReinforcementShapeProperties
+from TypeCollections.ModelEleList import ModelEleList
+from Utils.RotationUtil import RotationUtil
 ```
 
-### Shape creation
+For `execute_python`, imports are blocked by the sandbox. Use the names already exposed by the host, such as `AllplanGeo`, `AllplanReinf`, `AllplanBaseElements`, and `AllplanBasisElements`.
 
-- `AllplanReinf.BendingShape(AllplanGeo.Point3D(x, y, z), diameter, steel_grade, concrete_grade) -> shape`
-  - Use for a straight bar or a point shape
+## Global contract
 
-- `AllplanReinf.BendingShape(polyline3d, rollers, diameter, steel_grade, concrete_grade, bending_shape_type) -> shape`
-  - Use for stirrups, hoops, and bent bars
-  - `rollers` is often `AllplanGeo.VecDoubleList([...])`
-  - `bending_shape_type` can be `AllplanReinf.BendingShapeType.eH1` for a closed stirrup
+Define these values once near the top of the generated script or extract them from `build_ele`:
 
-- `shape.SetHookLengthStart(length)`
-- `shape.SetHookLengthEnd(length)`
-  - Use only when the requested bar actually needs hooks
+```python
+steel_grade = -1
+concrete_grade = -1
+cover = 50.0
+diameter_main = 16.0
+diameter_tie = 8.0
+spacing_main = 150.0
+spacing_tie = 200.0
+```
 
-### Bar placement
+Use `-1` for steel or concrete grade when the project should use current ALLPLAN settings.
 
-- `AllplanReinf.BarPlacement(position_number, bar_count, dist_vec, start_point, end_point, bending_shape) -> placement`
-  - Use for single bars and linear placements
-  - For a single bar use:
-    - `bar_count = 1`
-    - `dist_vec = AllplanGeo.Vector3D(0.0, 0.0, 0.0)`
-  - This is the first API to try for most rebar code
+Keep dimensions in millimeters unless the user says otherwise.
 
-- `LinearBarPlacementBuilder.create_linear_bar_placement_from_to_by_dist(...) -> BarPlacement`
-  - Use when the user gives spacing
-  - Prefer this over manual loops for dense linear mats
+## Geometry convention
 
-- `LinearBarPlacementBuilder.create_linear_bar_placement_from_to_by_count(...) -> BarPlacement`
-  - Use when the user gives bar count
+Use one coordinate convention across the whole element:
 
-### 3D and special placements
+- `X`: member length or footing/cap length.
+- `Y`: member width.
+- `Z`: height, thickness, or depth.
+- Origin: lower-left-bottom corner of the concrete host.
+- Concrete cover: measured from concrete faces to the outside of the relevant bar layer.
 
-- `AllplanReinf.ExtrudeBarPlacement(...) -> placement`
-  - Use for path based 3D cages and extrusion style reinforcement
+Do not mix local systems between concrete, bars, and ties. Derive every point from host dimensions, cover, diameter, and spacing.
 
-- `AllplanReinf.SweepBarPlacement(...) -> placement`
-  - Use for multiple path continuous reinforcement
+## Shape selection
 
-- `AllplanReinf.CircularAreaElement(...) -> placement`
-  - Use for circular hoops or circumferential layouts
+Use these rules before choosing an API:
 
-### Mesh placement
+- Straight bar with explicit length:
+  - Build a two-point `Polyline3D`.
+  - Use `BendingShape(polyline, rollers, diameter, steel_grade, concrete_grade, BendingShapeType.LongitudinalBar)`.
+- Closed rectangular tie or stirrup:
+  - Prefer `GeneralReinfShapeBuilder.create_stirrup(...)`.
+  - Use a closed polyline only when the builder does not match the shape.
+- Point shape:
+  - Use `BendingShape(Point3D(...), ...)` mainly for extrusion or sweep workflows.
+  - Do not use point shape as the default straight bar recipe.
+- Pile hoop or circular area:
+  - Use a circular polyline plus `CircularAreaElement(...)` when the reinforcement is circumferential.
+  - Use closed stirrup/hoop placements when the requested result is discrete rings.
+- Welded mesh:
+  - Use `MeshPlacement` or `PlaneMeshPlacement` instead of modeling every wire as a bar.
 
-- `AllplanReinf.MeshPlacement(...) -> mesh`
-  - Use for planar welded mesh placement
+## Placement selection
 
-- `AllplanReinf.PlaneMeshPlacement(...) -> mesh`
-  - Use when the workflow is driven by mesh data objects
+- One already-defined bar at one location:
+  - `BarPlacement(position, 1, Vector3D(), Point3D(), Point3D(), shape)`.
+  - Move or rotate the shape before placement when needed.
+- Repeated bars by spacing:
+  - `LinearBarBuilder.create_linear_bar_placement_from_to_by_dist(...)`.
+- Repeated bars by count:
+  - `LinearBarBuilder.create_linear_bar_placement_from_to_by_count(...)`.
+- Beam or column tie zones:
+  - Split into regions. Each spacing or diameter region should be a separate placement.
+- Pile cage:
+  - Longitudinal bars are vertical straight shapes placed around the pile radius.
+  - Hoops are circular or closed ring placements along depth.
 
-### Catalog and utility lookups
+## Minimal snippets
 
-- `AllplanReinf.ReinforcementSettings.GetEngCatCrossSections()`
-  - Use to query available bar and mesh catalogs
+Create a straight local shape:
 
-- `AllplanReinf.ReinforcementSettings.GetEngCatDiameters(catalog)`
-  - Use to query standard diameters from a catalog
+```python
+def p(x, y, z):
+    return AllplanGeo.Point3D(float(x), float(y), float(z))
 
-- `AllplanReinf.ReinforcementSettings.GetEngCatMeshes(catalog)`
-  - Use to query standard mesh types from a catalog
+def straight_shape_x(length, diameter, steel_grade=-1, concrete_grade=-1):
+    polyline = AllplanGeo.Polyline3D()
+    polyline += p(0.0, 0.0, 0.0)
+    polyline += p(length, 0.0, 0.0)
+    rollers = AllplanGeo.VecDoubleList([0.0])
+    return AllplanReinf.BendingShape(
+        polyline,
+        rollers,
+        diameter,
+        steel_grade,
+        concrete_grade,
+        AllplanReinf.BendingShapeType.LongitudinalBar,
+    )
+```
 
-## Core API inventory
+Move a single bar shape into the host:
 
-- `BendingShape`
-  - Use for bar geometry, diameter, steel grade, and start or end hooks
-- `BarPlacement`
-  - Use for straight bars, stirrups, and repeated linear placements
-- `ExtrudeBarPlacement`
-  - Use for 3D cages, frames, and path based bar groups
-- `SweepBarPlacement`
-  - Use for multi path continuous reinforcement
-- `MeshPlacement`
-  - Use for flat reinforcement meshes
-- `PlaneMeshPlacement`
-  - Use for mesh data driven planar mesh placement
-- `ReinforcementSettings`
-  - Use to query standard bar diameters, bar catalogs, and mesh catalogs
-- `StdReinfShapeBuilder`
-  - Use when a high level builder already matches the requested pattern
+```python
+shape = straight_shape_x(clear_length, diameter_main, steel_grade, concrete_grade)
+shape.Move(AllplanGeo.Vector3D(x0, y0, z0))
+placement = AllplanReinf.BarPlacement(1, 1, AllplanGeo.Vector3D(), AllplanGeo.Point3D(), AllplanGeo.Point3D(), shape)
+```
 
-## Geometry inputs to prefer
+Place a straight bar shape repeatedly across a slab, footing, or cap:
 
-- Keep point lists explicit
-- Use `Polyline2D` or `Polyline3D` for bending shapes
-- Use `Point3D`, `Vector3D`, `Path3D`, and `Path3DList` for placement geometry
-- Convert 2D shape intent into 3D only at the runtime boundary
-- Keep cover, spacing, diameter, hook length, and bar count as explicit inputs
+```python
+shape = straight_shape_x(clear_length_x, diameter_main, steel_grade, concrete_grade)
+placement = LinearBarBuilder.create_linear_bar_placement_from_to_by_dist(
+    1,
+    shape,
+    p(x0, y0, z0),
+    p(x0, y1, z0),
+    0.0,
+    0.0,
+    spacing_main,
+    StartEndPlacementRule.AdditionalCover,
+    True,
+)
+```
 
-## Structure
+Create a stirrup or rectangular tie shape:
 
-- Keep the template script standalone
-- Do not import from other template scripts
-- Build the bending shape first
-- Build the placement second
-- Return placements through `CreateElementResult`
-- Keep schedule or export helpers separate from geometry creation
+```python
+roller = AllplanReinf.BendingRollerService.GetBendingRollerFactor(diameter_tie, steel_grade, -1, True)
+shape_props = ReinforcementShapeProperties.rebar(
+    diameter_tie,
+    roller,
+    steel_grade,
+    concrete_grade,
+    AllplanReinf.BendingShapeType.Stirrup,
+)
+cover_props = ConcreteCoverProperties.all(cover)
+stirrup_shape = GeneralShapeBuilder.create_stirrup(
+    section_width,
+    section_height,
+    RotationUtil(90, 0, 0),
+    shape_props,
+    cover_props,
+)
+```
 
-## Expected runtime pattern
+Place stirrups along a beam or ties along a column:
 
-1. Read the template script from `scripts/`
-2. Keep point lists explicit
-3. Validate diameter spacing and count
-4. Create a `BendingShape`
-5. Create one or more placement objects
-6. Apply common properties and attributes only after the reinforcement object exists
+```python
+ties = LinearBarBuilder.create_linear_bar_placement_from_to_by_dist(
+    2,
+    stirrup_shape,
+    p(0.0, 0.0, 0.0),
+    p(length, 0.0, 0.0),
+    cover,
+    cover,
+    spacing_tie,
+    StartEndPlacementRule.AdditionalCover,
+    True,
+)
+```
+
+## Structural mapping
+
+- Footing:
+  - Host cuboid.
+  - Bottom X mat, bottom Y mat, optional top X/Y mats.
+  - Pedestal dowels or column starter bars if requested.
+- Beam:
+  - Host cuboid.
+  - Top and bottom longitudinal bars.
+  - Stirrups along length, usually split into support and midspan regions.
+- Pile:
+  - Host cylinder.
+  - Vertical bars around radius.
+  - Hoops or `CircularAreaElement` along depth.
+- Pile cap:
+  - Host cuboid with pile center coordinates.
+  - Cap bottom/top mats.
+  - Optional punching/shear ties around piles or pedestal.
+  - Pile cages aligned to the same centers.
+- Pedestal or column:
+  - Host cuboid or cylinder.
+  - Vertical corner/perimeter bars.
+  - Ties/hoops along height, with denser end zones if needed.
+- Slab:
+  - Host cuboid.
+  - Bottom and top X/Y mats.
+  - Use mesh only when the user requests welded mesh or standard mesh.
+
+## Result assembly
+
+Return concrete and reinforcement together:
+
+```python
+model_ele_list = ModelEleList(common_properties)
+model_ele_list.append_geometry_3d(host_brep)
+
+reinf_ele_list = ModelEleList()
+reinf_ele_list.append(bottom_x)
+reinf_ele_list.append(bottom_y)
+
+return CreateElementResult(elements=model_ele_list + reinf_ele_list)
+```
 
 ## Documentation workflow
 
-Use the docs in this order when the API shape is not obvious
+When the API shape is not obvious:
 
-1. Read reinforcement shape definition
-2. Read reinforcement placement
-3. Read the exact `BarPlacement` or `CircularAreaElement` API page
-4. Read geometry pages only if the host concrete geometry also needs to be created
-5. Feed only the exact confirmed constructors back into generated code
-
-The docs are enough for the contracts
-- shape definition
-- placement definition
-- host geometry creation
-- result assembly
-
-The docs are usually not enough for the full orchestration of a reinforced beam, pile cap, or pile cage in one page
-That orchestration still needs to be encoded in skill guidance or templates
-
-## Function map
-
-| Function | Purpose |
-| --- | --- |
-| `create_bar_2d` | Build a bar from a 2D path and optional hooks |
-| `create_bar_3d` | Build a bar from explicit 3D points |
-| `create_linear_bar_placement` | Distribute one bending shape by count or spacing |
-| `create_mesh_placement` | Build a planar mesh from two directions |
-| `rebar_set_properties` | Apply layer, pen, color, or material style metadata |
-| `place_rebar_on_element` | Attach or associate reinforcement to a host element |
-| `generate_bending_schedule` | Extract schedule style rows from created bars |
-| `export_rebar_to_ifc` | Hand off created bars to an export path when needed |
-
-## Guidance
-
-- Prefer `BarPlacement` for the simplest answer
-- Prefer `BendingShape(Point3D, ...)` plus `BarPlacement(...)` for straight bars
-- Prefer `BendingShape(polyline, rollers, ..., eH1)` plus `BarPlacement(...)` for closed stirrups and hoops
-- Use `ExtrudeBarPlacement` only when the path logic is truly 3D
-- Use `MeshPlacement` or `PlaneMeshPlacement` when the user is asking for welded mesh rather than individual bars
-- Query `ReinforcementSettings` when the user asks for standard diameters or catalog meshes
-- Use builder helpers only when they reduce real complexity
-- If the user asks for a bending schedule, extract geometry and hooks from the created `BendingShape` objects instead of recomputing from text
-- For many repeated bars, prefer a builder or one placement object over manual element by element loops
-- For beam style reinforcement, treat the problem as four contracts
-  - host geometry
-  - bending shape
-  - placement
-  - result assembly
-
-## Canonical patterns
-
-- Straight bar pattern:
-  - `BendingShape(Point3D(...), diameter, steel, concrete)`
-  - `BarPlacement(position, 1, Vector3D(), start, end, shape)`
-
-- Closed bar pattern:
-  - build `Polyline3D`
-  - build `VecDoubleList`
-  - `BendingShape(polyline, rollers, diameter, steel, concrete, BendingShapeType.eH1)`
-  - `BarPlacement(position, 1, Vector3D(), start, start, shape)`
+1. Read `shape-definition.md`.
+2. Read `placement-patterns.md`.
+3. Read `structural-recipes.md`.
+4. Read exact API pages only for constructors or enum names.
+5. Generate a small PythonPart with explicit derived values.
 
 ## Script
 
@@ -236,7 +277,7 @@ That orchestration still needs to be encoded in skill guidance or templates
 
 ## Risks and assumptions
 
-- API names can vary across ALLPLAN versions
-- Reinforcement catalogs depend on the local installation and project setup
-- Export and host association flows may depend on licensed modules
-- Some reinforcement services are only meaningful on Windows inside the ALLPLAN runtime
+- Enum names and helper modules can vary by ALLPLAN version.
+- Reinforcement catalogs depend on the local installation and project setup.
+- Some services only work inside the ALLPLAN runtime on Windows.
+- A shape's geometry and a placement's distribution are different concepts. Do not expect placement lines to stretch a too-short shape.
