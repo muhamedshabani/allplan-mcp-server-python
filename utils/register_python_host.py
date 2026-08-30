@@ -6,7 +6,6 @@ import shutil
 import time
 from pathlib import Path
 
-
 DEFAULT_ALLPLAN_VERSION = "2026"
 PYTHONPART_FOLDER = "PythonHost"
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-
 PointList3D = Annotated[list[tuple[float, float, float]], "3D centerline points in model units"]
 PointList2D = Annotated[list[tuple[float, float]], "2D centerline points in model units"]
 RebarObject = Annotated[Any, "ALLPLAN reinforcement object"]
