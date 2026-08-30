@@ -55,9 +55,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
-# Untouched upstream file. Reformatting it would rewrite every line, since it
-# is the one file in the repo with CRLF endings.
-"python_host/PythonPartsScripts/PythonHost/PythonHostHandler.py" = ["I001"]
 
 [tool.mypy]
 python_version = "3.11"

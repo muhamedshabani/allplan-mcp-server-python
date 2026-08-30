@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import os
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from fastmcp.utilities.types import Image
 
 from allplan_mcp.allplan_client import AllplanHostClient
 from allplan_mcp.skills import SkillsManager
@@ -103,6 +105,14 @@ def execute_python_description() -> str:
         "Set a variable named 'result' or pass result_expression to return a value.",
         "Code runs under a wall clock budget and its stdout is captured.",
         "",
+        "Everything one call creates collapses into a single Allplan undo step,",
+        "so the user can back out the whole change at once. Pass undo=False only",
+        "when the code deliberately should not be undoable as one unit.",
+        "",
+        "After changing the model, verify it instead of assuming: capture_viewport()",
+        "returns an image of the result, and get_elements() returns element UUIDs",
+        "that get_element_info(uuid) expands into a bounding box.",
+        "",
         "Before writing Allplan API code, read the bundled skills. Call",
         "search_allplan_skills(query) to find the relevant one, then",
         "read_allplan_skill(uri) to read it. Available skills:",
@@ -189,7 +199,7 @@ def create_cube(size: float) -> dict[str, Any]:
     if size <= 0:
         raise ValueError("size must be greater than zero.")
 
-    _allplan_client().post(
+    response = _allplan_client().post(
         "/create-box",
         {
             "length": size,
@@ -197,15 +207,7 @@ def create_cube(size: float) -> dict[str, Any]:
             "height": size,
         },
     )
-    return {
-        "created": True,
-        "type": "cube",
-        "dimensions": {
-            "length": size,
-            "width": size,
-            "height": size,
-        },
-    }
+    return _creation_result(response, "cube", length=size, width=size, height=size)
 
 
 @mcp.tool
@@ -215,7 +217,7 @@ def create_box(length: float, width: float, height: float) -> dict[str, Any]:
     if length <= 0 or width <= 0 or height <= 0:
         raise ValueError("length, width, and height must be greater than zero.")
 
-    _allplan_client().post(
+    response = _allplan_client().post(
         "/create-box",
         {
             "length": length,
@@ -223,15 +225,9 @@ def create_box(length: float, width: float, height: float) -> dict[str, Any]:
             "height": height,
         },
     )
-    return {
-        "created": True,
-        "type": "cuboid",
-        "dimensions": {
-            "length": length,
-            "width": width,
-            "height": height,
-        },
-    }
+    return _creation_result(
+        response, "cuboid", length=length, width=width, height=height
+    )
 
 
 @mcp.tool(description=execute_python_description())
@@ -240,11 +236,15 @@ def execute_python(
     result_expression: Annotated[
         str | None, "Optional expression evaluated after the code runs"
     ] = None,
+    undo: Annotated[
+        bool,
+        "Group everything this code creates into a single Allplan undo step",
+    ] = True,
 ) -> dict[str, Any]:
     if not code.strip():
         raise ValueError("code must be a non-empty string.")
 
-    payload: dict[str, Any] = {"code": code}
+    payload: dict[str, Any] = {"code": code, "undo": undo}
     if result_expression is not None:
         payload["result_expression"] = result_expression
 
@@ -256,6 +256,96 @@ def execute_python(
             response["hint"] = _failure_hint(error)
 
     return response
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_elements(
+    limit: Annotated[int, "Maximum number of elements to return"] = 500,
+) -> dict[str, Any]:
+    """List the elements in the current Allplan document with their UUIDs.
+
+    Each element carries a stable `uuid`, which is the handle to pass to
+    get_element_info. Prefer this over get_all_object_names, which returns
+    display names only and gives no way to refer to an element afterwards.
+    """
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero.")
+
+    return _allplan_client().post("/get-elements", {"limit": limit})
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_element_info(
+    uuid: Annotated[str, "Model element UUID, from get_elements or a create tool"],
+) -> dict[str, Any]:
+    """Describe one Allplan element, including its bounding box.
+
+    Use this to check what was actually built - position and extent - instead of
+    assuming the code did what was intended.
+    """
+
+    if not uuid.strip():
+        raise ValueError("uuid must be a non-empty string.")
+
+    return _allplan_client().post("/get-element-info", {"uuid": uuid})
+
+
+@mcp.tool(annotations=READ_ONLY)
+def capture_viewport(
+    width: Annotated[int | None, "Image width in pixels"] = None,
+    height: Annotated[int | None, "Image height in pixels"] = None,
+) -> Image:
+    """Capture the active Allplan viewport as a PNG image.
+
+    Use this to see the model after changing it, rather than inferring the
+    result from code that ran. Omit width and height to capture at the
+    viewport's own resolution, which matches what the user is looking at.
+    """
+
+    payload: dict[str, Any] = {}
+    if (width is None) != (height is None):
+        raise ValueError("Provide both width and height, or neither.")
+    if width is not None and height is not None:
+        if width <= 0 or height <= 0:
+            raise ValueError("width and height must be greater than zero.")
+        payload["width"] = width
+        payload["height"] = height
+
+    response = _allplan_client().post("/capture-viewport", payload)
+
+    encoded = response.get("base64")
+    if not isinstance(encoded, str) or not encoded:
+        raise ValueError(f"Allplan returned no image data: {response!r}")
+
+    return Image(data=base64.b64decode(encoded), format="png")
+
+
+def _creation_result(
+    response: dict[str, Any],
+    shape: str,
+    **dimensions: float,
+) -> dict[str, Any]:
+    """Report what the bridge actually created
+
+    The bridge returns the created elements, so `created` reflects the document
+    rather than the fact that the request did not raise.
+    """
+
+    elements = response.get("elements")
+    elements = elements if isinstance(elements, list) else []
+
+    return {
+        "created": bool(elements),
+        "type": shape,
+        "dimensions": dimensions,
+        "elements": elements,
+        "uuids": [
+            element["uuid"]
+            for element in elements
+            if isinstance(element, dict) and element.get("uuid")
+        ],
+    }
 
 
 def _failure_hint(error: dict[str, Any]) -> str:
