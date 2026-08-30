@@ -7,6 +7,12 @@ description: Use this skill when the agent needs to write ALLPLAN PythonPart cod
 
 Use this skill for cuboids, cylinders, points, vectors, and simple model element creation
 
+## Not for architectural objects
+
+A `Wand`, `Decke`, or `Stütze` is not a generic solid. A cuboid has no
+Wandschichten, so it can never carry a Schraffur and reads as blank in section.
+For those, use the `allplan-architecture` skill and the `create_wall` tool.
+
 ## Asset pack
 
 Read these asset notes before writing non-trivial host geometry
