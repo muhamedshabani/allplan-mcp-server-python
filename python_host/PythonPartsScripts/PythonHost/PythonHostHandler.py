@@ -4,9 +4,11 @@ import contextlib
 from typing import Any
 
 import NemAll_Python_AllplanSettings as AllplanSettings
+import NemAll_Python_ArchElements as AllplanArchElements
 import NemAll_Python_BaseElements as AllplanBaseElements
 import NemAll_Python_BasisElements as AllplanBasisElements
 import NemAll_Python_Geometry as AllplanGeo
+import NemAll_Python_IFW_ElementAdapter as AllplanEleAdapter
 import NemAll_Python_IFW_Input as AllplanIFW
 
 from .capture import CaptureLimits, capture_viewport
@@ -19,6 +21,7 @@ from .elements import (
 )
 from .sandbox import SandboxExecutor
 from .undo import undo_step
+from .walls import normalize_wall, surface_report
 
 AllplanBaseEle = AllplanBaseElements
 
@@ -48,6 +51,9 @@ class RequestHandler:
 
             case "/get-element-info":
                 return self.handle_get_element_info(request)
+
+            case "/create-wall":
+                return self.handle_create_wall(request)
 
             case "/create-box":
                 return self.handle_create_box(request)
@@ -193,6 +199,96 @@ class RequestHandler:
             "elements": elements,
             "count": len(elements),
             "truncated": truncated,
+        }
+
+    def wall_properties(self, doc: Any, wall: dict) -> Any:
+        """Build WallProperties from a normalized wall spec
+
+        The Schraffur is set per Wandschicht. Allplan's own WallInteractor
+        resets hatch, pattern and face style on every tier and then sets
+        whichever one is active, so this does the same.
+        """
+
+        wall_prop = AllplanArchElements.WallProperties()
+
+        axis_prop = AllplanArchElements.AxisProperties()
+        axis_prop.Distance = 0.0
+        axis_prop.Extension = -1
+        axis_prop.Position = AllplanArchElements.WallAxisPosition.eFree
+
+        tiers = wall["tiers"]
+        wall_prop.SetTierCount(len(tiers))
+        wall_prop.SetAxis(axis_prop)
+
+        plane_ref = AllplanArchElements.PlaneReferences(
+            doc, AllplanEleAdapter.BaseElementAdapter()
+        )
+        plane_ref.SetAbsBottomElevation(wall["bottom_elevation"])
+        plane_ref.SetAbsTopElevation(wall["top_elevation"])
+
+        for index, tier in enumerate(tiers):
+            tier_prop = wall_prop.GetWallTierProperties(index + 1)
+            tier_prop.SetThickness(tier["thickness"])
+
+            com_prop = AllplanBaseElements.CommonProperties()
+            com_prop.GetGlobalProperties()
+            if "layer" in tier:
+                com_prop.Layer = tier["layer"]
+            tier_prop.SetCommonProperties(com_prop)
+
+            tier_prop.SetHatch(0)
+            tier_prop.SetPattern(0)
+            tier_prop.SetFaceStyle(0)
+
+            surface = tier["surface"]
+            surface_id = tier["surface_id"]
+            if surface == "hatch":
+                tier_prop.SetHatch(surface_id)
+            elif surface == "pattern":
+                tier_prop.SetPattern(surface_id)
+            elif surface == "face_style":
+                tier_prop.SetFaceStyle(surface_id)
+            elif surface == "filling":
+                tier_prop.SetBackgroundColor(surface_id)
+
+            tier_prop.SetPlaneReferences(plane_ref)
+
+        return wall_prop
+
+    def handle_create_wall(self, request: dict) -> dict:
+        """Create an architectural wall with an explicit Schraffur per tier"""
+
+        try:
+            wall = normalize_wall(request)
+        except ValueError as error:
+            raise Exception(str(error)) from error
+
+        doc = self.document()
+        wall_prop = self.wall_properties(doc, wall)
+
+        start_x, start_y = wall["start"]
+        end_x, end_y = wall["end"]
+        axis = AllplanGeo.Line2D(
+            AllplanGeo.Point2D(start_x, start_y),
+            AllplanGeo.Point2D(end_x, end_y),
+        )
+
+        wall_ele = AllplanArchElements.WallElement(wall_prop, axis)
+
+        with undo_step(self.undo_service_factory(doc)) as undo_active:
+            created = self.create_elements(
+                doc, AllplanGeo.Matrix3D(), [wall_ele], undo_active
+            )
+
+        elements, truncated = describe_elements(created or [], DEFAULT_ELEMENT_LIMIT)
+
+        return {
+            "created": bool(elements),
+            "elements": elements,
+            "count": len(elements),
+            "truncated": truncated,
+            "thickness": wall["thickness"],
+            "tiers": surface_report(wall),
         }
 
     def handle_execute_python(self, request: dict) -> dict:
