@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Annotated
 
-
 BuiltinName = Annotated[str, "Sandbox builtin name"]
 
 blocked_builtin_names: frozenset[BuiltinName] = frozenset(
@@ -55,5 +54,14 @@ allowed_builtin_names: frozenset[BuiltinName] = frozenset(
         "tuple",
         "ValueError",
         "zip",
+    }
+)
+
+AttributeName = Annotated[str, "Sandbox attribute name"]
+
+blocked_attribute_names: frozenset[AttributeName] = frozenset(
+    {
+        "format",
+        "format_map",
     }
 )

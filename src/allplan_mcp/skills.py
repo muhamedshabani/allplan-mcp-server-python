@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib.resources
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 
 def skills_root() -> Path:
@@ -111,7 +112,10 @@ class SkillsManager:
             raise ValueError("Invalid script name")
         if script_name not in entry.scripts:
             available = ", ".join(entry.scripts) or "none"
-            raise ValueError(f"Unknown script '{script_name}' for skill '{skill_name}'. Available scripts: {available}")
+            raise ValueError(
+                f"Unknown script '{script_name}' for skill '{skill_name}'. "
+                f"Available scripts: {available}"
+            )
         return entry.scripts_dir / script_name
 
     def asset_path(
@@ -125,7 +129,10 @@ class SkillsManager:
             raise ValueError("Invalid asset name")
         if asset_name not in entry.assets:
             available = ", ".join(entry.assets) or "none"
-            raise ValueError(f"Unknown asset '{asset_name}' for skill '{skill_name}'. Available assets: {available}")
+            raise ValueError(
+                f"Unknown asset '{asset_name}' for skill '{skill_name}'. "
+                f"Available assets: {available}"
+            )
         return entry.assets_dir / asset_name
 
     def index_text(self) -> str:
@@ -177,3 +184,133 @@ class SkillsManager:
     ) -> str:
         """Read one sample script"""
         return self.script_path(skill_name, script_name).read_text(encoding="utf-8")
+
+    def documents(self) -> list[dict[str, str]]:
+        """List every readable skill document with its resource URI"""
+
+        documents: list[dict[str, str]] = []
+        for entry in self.entries.values():
+            documents.append(
+                {
+                    "uri": f"allplan://skills/{entry.name}",
+                    "skill": entry.name,
+                    "kind": "skill",
+                    "name": "SKILL.md",
+                    "description": entry.description,
+                }
+            )
+            for asset_name in entry.assets:
+                documents.append(
+                    {
+                        "uri": f"allplan://skills/{entry.name}/assets/{asset_name}",
+                        "skill": entry.name,
+                        "kind": "asset",
+                        "name": asset_name,
+                        "description": "",
+                    }
+                )
+            for script_name in entry.scripts:
+                documents.append(
+                    {
+                        "uri": f"allplan://skills/{entry.name}/scripts/{script_name}",
+                        "skill": entry.name,
+                        "kind": "script",
+                        "name": script_name,
+                        "description": "",
+                    }
+                )
+        return documents
+
+    def document_text(self, document: dict[str, str]) -> str:
+        """Read the text behind one document descriptor"""
+
+        kind = document["kind"]
+        if kind == "skill":
+            return self.skill_text(document["skill"])
+        if kind == "asset":
+            return self.asset_text(document["skill"], document["name"])
+        return self.script_text(document["skill"], document["name"])
+
+    def read_uri(self, uri: str) -> str:
+        """Read one bundled document by its allplan:// resource URI"""
+
+        for document in self.documents():
+            if document["uri"] == uri:
+                return self.document_text(document)
+
+        raise ValueError(
+            f"Unknown skill resource '{uri}'. Call list_allplan_skills to see valid URIs."
+        )
+
+    def search(
+        self,
+        query: Annotated[str, "Free text query"],
+        limit: Annotated[int, "Maximum hits"] = 5,
+        context_lines: Annotated[int, "Lines of context per snippet"] = 2,
+    ) -> list[dict[str, Any]]:
+        """Rank bundled skill documents against a free text query
+
+        Deliberately a plain term frequency scan with no index and no
+        dependencies. The corpus is under a thousand lines, so the cost of
+        scanning it is far below the cost of the model guessing at the Allplan
+        API because it never read these files.
+        """
+
+        terms = [term for term in re.split(r"\W+", query.lower()) if len(term) > 2]
+        if not terms:
+            return []
+
+        hits: list[dict[str, Any]] = []
+        for document in self.documents():
+            try:
+                text = self.document_text(document)
+            except (OSError, ValueError):
+                continue
+
+            haystack = text.lower()
+            score = 0
+            for term in terms:
+                score += haystack.count(term)
+                if term in document["name"].lower() or term in document["skill"].lower():
+                    score += 5
+                if term in document["description"].lower():
+                    score += 3
+
+            if score == 0:
+                continue
+
+            hits.append(
+                {
+                    **document,
+                    "score": score,
+                    "snippet": self.snippet(text, terms, context_lines),
+                }
+            )
+
+        hits.sort(key=lambda hit: (-int(hit["score"]), str(hit["uri"])))
+        return hits[:limit]
+
+    def snippet(
+        self,
+        text: str,
+        terms: list[str],
+        context_lines: int,
+    ) -> str:
+        """Build a small excerpt around the best matching line"""
+
+        lines = text.splitlines()
+        best_index = 0
+        best_score = -1
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            score = sum(lowered.count(term) for term in terms)
+            if score > best_score:
+                best_score = score
+                best_index = index
+
+        if best_score <= 0:
+            return "\n".join(lines[: context_lines * 2 + 1])
+
+        start = max(0, best_index - context_lines)
+        end = min(len(lines), best_index + context_lines + 1)
+        return "\n".join(lines[start:end])

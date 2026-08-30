@@ -8,7 +8,6 @@ from fastmcp import FastMCP
 from allplan_mcp.allplan_client import AllplanHostClient
 from allplan_mcp.skills import SkillsManager
 
-
 DEFAULT_ALLPLAN_HOST_URL = "http://127.0.0.1:5679"
 DEFAULT_MCP_HOST = "127.0.0.1"
 DEFAULT_MCP_PORT = 8888
@@ -81,6 +80,74 @@ def allplan_skill_script(
     """Read one sample script"""
 
     return skills_manager.script_text(skill_name, script_name)
+
+
+READ_ONLY = {"readOnlyHint": True}
+
+
+def execute_python_description() -> str:
+    """Build the execute_python description, with the skills index inlined
+
+    The bundled skills are also MCP resources, but most clients never fetch a
+    resource on their own. Naming them here, in the description of the tool the
+    model actually reaches for, is what gets them read.
+    """
+
+    lines = [
+        "Execute Python inside the running Allplan process.",
+        "",
+        "The Allplan API modules are already in scope, no imports are allowed:",
+        "AllplanGeo, AllplanIFW, AllplanSettings, AllplanBaseElements,",
+        "AllplanBasisElements, AllplanBaseEle, and coord_input.",
+        "",
+        "Set a variable named 'result' or pass result_expression to return a value.",
+        "Code runs under a wall clock budget and its stdout is captured.",
+        "",
+        "Before writing Allplan API code, read the bundled skills. Call",
+        "search_allplan_skills(query) to find the relevant one, then",
+        "read_allplan_skill(uri) to read it. Available skills:",
+        "",
+    ]
+    for entry in skills_manager.entries.values():
+        lines.append(f"- {entry.name}: {entry.description}")
+    return "\n".join(lines)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_allplan_skills() -> list[dict[str, str]]:
+    """List the bundled ALLPLAN skill documents and their resource URIs.
+
+    Covers reinforcement detailing, geometry, API reference lookup, and runtime
+    helpers. Read these before writing Allplan API code with execute_python.
+    """
+
+    return skills_manager.documents()
+
+
+@mcp.tool(annotations=READ_ONLY)
+def search_allplan_skills(
+    query: Annotated[str, "Free text query, e.g. 'rebar bending shape' or 'polyhedron'"],
+    limit: Annotated[int, "Maximum number of hits"] = 5,
+) -> list[dict[str, Any]]:
+    """Search the bundled ALLPLAN skill documentation.
+
+    Returns ranked hits with a snippet and a URI. Pass the URI to
+    read_allplan_skill to read the full document.
+    """
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero.")
+
+    return skills_manager.search(query, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def read_allplan_skill(
+    uri: Annotated[str, "Resource URI from list_allplan_skills or search_allplan_skills"],
+) -> str:
+    """Read one bundled ALLPLAN skill, asset note, or sample script in full."""
+
+    return skills_manager.read_uri(uri)
 
 
 @mcp.tool
@@ -167,13 +234,13 @@ def create_box(length: float, width: float, height: float) -> dict[str, Any]:
     }
 
 
-@mcp.tool
+@mcp.tool(description=execute_python_description())
 def execute_python(
-    code: str,
-    result_expression: str | None = None,
+    code: Annotated[str, "Python source executed inside Allplan"],
+    result_expression: Annotated[
+        str | None, "Optional expression evaluated after the code runs"
+    ] = None,
 ) -> dict[str, Any]:
-    """Execute Python inside Allplan"""
-
     if not code.strip():
         raise ValueError("code must be a non-empty string.")
 
@@ -181,7 +248,38 @@ def execute_python(
     if result_expression is not None:
         payload["result_expression"] = result_expression
 
-    return _allplan_client().post("/execute-python", payload)
+    response = _allplan_client().post("/execute-python", payload)
+
+    if response.get("ok") is False:
+        error = response.get("error", {})
+        if isinstance(error, dict):
+            response["hint"] = _failure_hint(error)
+
+    return response
+
+
+def _failure_hint(error: dict[str, Any]) -> str:
+    """Turn a sandbox failure into one actionable sentence"""
+
+    kind = error.get("kind")
+    lineno = error.get("lineno")
+    location = f" at line {lineno}" if lineno else ""
+
+    if kind == "validation_error":
+        return (
+            "The sandbox rejected this code before running it"
+            f"{location}. Imports, class definitions, and underscore-prefixed "
+            "names are not allowed. The Allplan modules are already in scope."
+        )
+    if kind == "syntax_error":
+        return f"The submitted code does not parse{location}."
+    if kind == "timeout":
+        return (
+            "The code exceeded its time budget and was aborted"
+            f"{location}. Avoid unbounded loops, and split long jobs into "
+            "several execute_python calls."
+        )
+    return f"The code raised {error.get('type', 'an exception')}{location}."
 
 
 def main() -> None:
