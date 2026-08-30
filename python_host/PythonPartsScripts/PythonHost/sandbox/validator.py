@@ -3,8 +3,7 @@ from __future__ import annotations
 import ast
 from typing import Annotated, Literal
 
-from .const import blocked_builtin_names
-
+from .const import blocked_attribute_names, blocked_builtin_names
 
 SandboxMode = Annotated[Literal["exec", "eval"], "AST parse mode"]
 PythonSource = Annotated[str, "Sandbox source text"]
@@ -15,7 +14,18 @@ class SandboxValidationError(Exception):
 
 
 class SandboxAstValidator(ast.NodeVisitor):
-    """Block unsafe syntax"""
+    """Block unsafe syntax
+
+    The attribute rules are the load bearing part. Note that str.format does
+    attribute traversal at runtime, invisible to this walk:
+
+        "{0.__globals__}".format(some_function)
+
+    reaches the real builtins even though no dunder appears as an AST attribute
+    node. That is why 'format' and 'format_map' are refused outright. f-strings
+    are the supported alternative, because their attribute access is a real AST
+    node and is checked above.
+    """
 
     def visit_Import(self, node: ast.Import) -> None:
         raise SandboxValidationError("import statements are not allowed in execute_python.")
@@ -48,6 +58,11 @@ class SandboxAstValidator(ast.NodeVisitor):
         if node.attr.startswith("_"):
             raise SandboxValidationError(
                 f"attribute '{node.attr}' is not allowed in execute_python."
+            )
+        if node.attr in blocked_attribute_names:
+            raise SandboxValidationError(
+                f"attribute '{node.attr}' is not allowed in execute_python. "
+                "Use an f-string instead, which this validator can inspect."
             )
         self.generic_visit(node)
 
