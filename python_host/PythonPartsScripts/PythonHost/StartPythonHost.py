@@ -13,6 +13,12 @@ from typing import List
 import NemAll_Python_IFW_Input as AllplanIFW
 
 from .PythonHostHandler import RequestHandler
+from .security import (
+    BridgeAuthError,
+    BridgeSecurityPolicy,
+    generate_token,
+    write_token,
+)
 from BuildingElement import BuildingElement
 from BuildingElementComposite import BuildingElementComposite
 from BuildingElementControlProperties import BuildingElementControlProperties
@@ -66,37 +72,55 @@ class WebRequestHandler(BaseHTTPRequestHandler):
     """
 
     request_handler : RequestHandler
+    security_policy : BridgeSecurityPolicy
+
+    def send_json(self, status: int, payload: dict):
+        """ Sends one JSON response
+
+        Args:
+            status:  HTTP status code
+            payload: JSON serializable body
+        """
+
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         """ Handles HTTP POST request
         """
 
         try:
-            content_len = int(self.headers.get("Content-Length"))
+            self.security_policy.authorize(self.headers)
+        except BridgeAuthError as error:
+            self.send_json(error.status, {"ok": False, "error": str(error)})
+            return
+
+        try:
+            content_len = int(self.headers.get("Content-Length") or 0)
             request = None
 
             if (content_len > 0):
                 request_json = self.rfile.read(content_len)
                 request = json.loads(request_json)
-            
-            result_json = ""
+
             result = invoke_in_ui_thread(
                 lambda: self.request_handler.handle(self.path, request)
             )
-
-            if (result != None):
-                result_json = json.dumps(result)
         except:
-            self.send_response(500) # Internal Server Error
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
             error = traceback.format_exc()
-            self.wfile.write(f"Server stack trace:\n{str(error)}".encode("utf-8"))
+            self.send_json(500, {"ok": False, "error": str(error)})
         else:
-            self.send_response(200) # OK    
-            self.send_header("Content-Type", "application/json")        
-            self.end_headers()
-            self.wfile.write(result_json.encode("utf-8"))
+            self.send_json(200, result if result is not None else {})
+
+    def log_message(self, format, *args):
+        """ Routes access logs to the Allplan trace window
+        """
+
+        print("PythonHost %s - %s" % (self.address_string(), format % args))
 
 # entry point
 
@@ -176,15 +200,22 @@ class PythonHostInteractor():
         # start http server
         address = "127.0.0.1"
         port = 5679
+
+        # mint a per-session token and publish it for local MCP clients
+        self.token = generate_token()
+        self.token_path = write_token(self.token)
+
         self.server = HTTPServer((address, port), WebRequestHandler)
         self.server.allow_reuse_address = True
         self.server.RequestHandlerClass.request_handler = RequestHandler(self.coord_input)
+        self.server.RequestHandlerClass.security_policy = BridgeSecurityPolicy(token=self.token)
 
         thread = Thread(target=self.start_server)
         thread.daemon = True
         thread.start()
 
         print("Python Host is started")
+        print(f"Bridge token written to {self.token_path}")
         
         # this timer pushes python thread to process requests if user minimized main window
         self.timer = DispatcherTimer()
@@ -216,6 +247,11 @@ class PythonHostInteractor():
         self.server.server_close()
         self.palette_service.close_palette()
         self.timer.Stop()
+
+        try:
+            self.token_path.unlink()
+        except OSError:
+            pass
         print("Python Host is stopped")
 
         return True
