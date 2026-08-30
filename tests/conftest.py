@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -12,21 +11,16 @@ BRIDGE_ROOT = REPO_ROOT / "python_host" / "PythonPartsScripts"
 # The bridge lives in a folder that Allplan puts on sys.path at runtime.
 if str(BRIDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(BRIDGE_ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-# executor.py imports the Allplan API, which only exists inside Allplan on
-# Windows. Stubbing the modules lets the whole bridge import here. Everything
-# under test is deliberately independent of what these modules actually do.
-ALLPLAN_MODULES = (
-    "NemAll_Python_AllplanSettings",
-    "NemAll_Python_BaseElements",
-    "NemAll_Python_BasisElements",
-    "NemAll_Python_Geometry",
-    "NemAll_Python_IFW_Input",
-)
+# The Allplan API only exists inside Allplan on Windows. fake_allplan installs
+# behavioural stand-ins so the bridge imports here and its wiring - undo
+# grouping, UUID reporting, viewport capture - is genuinely exercised.
+import fake_allplan  # noqa: E402
 
-for module_name in ALLPLAN_MODULES:
-    sys.modules.setdefault(module_name, types.ModuleType(module_name))
+fake_allplan.install()
 
 
 @pytest.fixture
@@ -39,3 +33,20 @@ def runtime():
 @pytest.fixture
 def token_file(tmp_path: Path) -> Path:
     return tmp_path / "bridge-token.json"
+
+
+@pytest.fixture
+def allplan():
+    """Reset the fake Allplan API and hand back its recorder"""
+
+    fake_allplan.recorder.reset()
+    return fake_allplan
+
+
+@pytest.fixture
+def handler(allplan):
+    """Build a RequestHandler wired to the fake Allplan API"""
+
+    from PythonHost.PythonHostHandler import RequestHandler
+
+    return RequestHandler(allplan.FakeCoordinateInput())

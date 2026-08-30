@@ -61,12 +61,43 @@ MCP_PATH=/mcp
 - `allplan_health`: checks whether the Allplan host is reachable.
 - `get_allplan_version`: returns the running Allplan version.
 - `get_all_object_names`: returns display names for elements in the current document.
-- `create_cube`: creates a cube in the current document.
-- `create_box`: creates a rectangular cuboid in the current document.
+- `create_cube`: creates a cube in the current document, returns its UUID.
+- `create_box`: creates a rectangular cuboid in the current document, returns its UUID.
+- `get_elements`: lists elements in the current document with their UUIDs.
+- `get_element_info`: describes one element by UUID, including its bounding box.
+- `capture_viewport`: returns a PNG of the active Allplan viewport.
 - `execute_python`: executes sandboxed Python inside the running Allplan host
 - `list_allplan_skills`: lists the bundled skill documents and their URIs.
 - `search_allplan_skills`: ranked full text search across the bundled skills.
 - `read_allplan_skill`: reads one skill, asset note, or sample script by URI.
+
+## Closing the loop
+
+An agent that writes Allplan code and never looks at the result is guessing.
+Three things make the result observable.
+
+**Elements have UUIDs.** `create_box` and `create_cube` return the elements they
+created, and `created` reflects what is actually in the document rather than the
+fact that the request did not raise. `get_elements` lists what is there, and
+`get_element_info(uuid)` expands one element into a bounding box, so the agent
+can check position and extent instead of assuming them.
+
+**The viewport is visible.** `capture_viewport()` returns a PNG of the active
+viewport as image content, so the model can see the model. Omit width and height
+to capture at the viewport's own resolution, which is what the user is looking
+at.
+
+**One request is one undo.** Allplan creates an undo step per `CreateElements`
+call, so a forty bar rebar cage would otherwise leave forty undo steps. The
+bridge suppresses the per-call step and closes a single step around the whole
+request. Pass `undo=False` to `execute_python` to opt out.
+
+The undo step is created even when the code fails partway. A script that raises
+has usually already put elements in the drawing file, and the user needs one
+undo to clear them.
+
+On older Allplan versions that do not accept `createUndoStep`, element creation
+falls back to the plain call: undo behaviour is coarser, creation still works.
 
 ## Skill resources
 
@@ -219,6 +250,26 @@ fresh one.
 Do not expose `execute_python` through ngrok or a shared agent setup. The token
 raises the bar against local processes and browsers, it does not make the bridge
 safe to publish.
+
+## Allplan-side verification status
+
+The tests stub the Allplan API, which is what lets them run on macOS and Linux.
+That covers the bridge's logic - routing, budgets, auth, undo grouping, UUID
+reporting, capture shaping - but it cannot prove the Allplan calls themselves
+are right.
+
+Verified only against fakes, not a real install:
+
+- `AllplanIFW.UndoRedoService(doc, True)` and `CreateUndoStep()`
+- `CreateElements(..., createUndoStep=False)` and its return value
+- `DrawingService.SaveWindowToImageFile(path, pixelWidth=, pixelHeight=)`
+- `DrawingService.RedrawAll(doc)`
+- `GetMinMaxBox([adapter])`
+- `BaseElementAdapter.GetModelElementUUID()`
+
+These call shapes are taken from Nemetschek's own
+[PythonPartsExamples](https://github.com/NemetschekAllplan/PythonPartsExamples),
+not invented, but they have not been exercised against Allplan itself.
 
 ## Development
 
