@@ -13,6 +13,8 @@ Read these asset notes before writing non-trivial host geometry
 
 - `assets/core-definitions.md`
 - `assets/host-geometry-workflow.md`
+- `assets/arch-elements.md` for walls, slabs and openings, which are tiered
+  architecture objects with a hatch per tier, not solids
 
 ## Geometry definitions
 

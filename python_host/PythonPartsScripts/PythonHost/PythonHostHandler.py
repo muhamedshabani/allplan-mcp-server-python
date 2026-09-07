@@ -118,7 +118,13 @@ class RequestHandler:
         """Get the Allplan version"""
 
         version = AllplanSettings.AllplanVersion.Version()
-        return {"version": version}
+        return {
+            "version": version,
+            # What a script may use on this host. A client that needs the
+            # architecture modules checks here before sending anything.
+            "api_scope": self.sandbox_executor.scope_names(),
+            "absent_modules": dict(self.sandbox_executor.absent_modules),
+        }
 
     def handle_get_all_object_names(self, request: dict) -> dict:
         """Get object names"""
