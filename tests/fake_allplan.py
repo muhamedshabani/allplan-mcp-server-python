@@ -31,6 +31,10 @@ MODULE_NAMES = (
     "NemAll_Python_BasisElements",
     "NemAll_Python_Geometry",
     "NemAll_Python_IFW_Input",
+    # the architecture modules the sandbox loads optionally
+    "NemAll_Python_ArchElements",
+    "NemAll_Python_IFW_ElementAdapter",
+    "NemAll_Python_Reinforcement",
 )
 
 
@@ -54,6 +58,7 @@ class Recorder:
         self.minmax_raises: bool = False
         self.create_accepts_undo_kwarg: bool = True
         self.version: str = "2026.0.0"
+        self.walls: list[Any] = []
 
 
 recorder = Recorder()
@@ -255,11 +260,107 @@ def build_modules() -> dict[str, types.ModuleType]:
     ifw.UndoRedoService = FakeUndoRedoService  # type: ignore[attr-defined]
     ifw.CoordinateInput = FakeCoordinateInput  # type: ignore[attr-defined]
 
+    arch = modules["NemAll_Python_ArchElements"]
+    arch.WallProperties = FakeWallProperties  # type: ignore[attr-defined]
+    arch.WallTierProperties = FakeWallTierProperties  # type: ignore[attr-defined]
+    arch.AxisProperties = FakeAxisProperties  # type: ignore[attr-defined]
+    arch.WallAxisPosition = _enum(eUnknown=0, eLeft=1, eCenter=2, eRight=4, eFree=8)  # type: ignore[attr-defined]
+    arch.PlaneReferences = FakePlaneReferences  # type: ignore[attr-defined]
+    arch.WallElement = FakeWallElement  # type: ignore[attr-defined]
+
+    adapter = modules["NemAll_Python_IFW_ElementAdapter"]
+    adapter.BaseElementAdapter = FakeAdapter  # type: ignore[attr-defined]
+    adapter.BaseElementAdapterList = list  # type: ignore[attr-defined]
+
     return modules
 
 
-def install() -> None:
-    """Put the fakes on sys.modules, replacing any earlier stubs"""
+def _enum(**members: int) -> Any:
+    return type("Enum", (), members)
+
+
+class FakePlaneReferences:
+    """Stand-in for AllplanArchElements.PlaneReferences, absolute levels only"""
+
+    PlaneReferenceDependency = _enum(eAbsElevation=0, eBottomPlane=1, eTopPlane=2)
+
+    def __init__(self, doc: Any, ref_element: Any) -> None:
+        self.doc = doc
+        self.bottom = self.top = None
+
+    def SetBottomPlaneDependency(self, dependency: int) -> None:
+        self.bottom_dependency = dependency
+
+    def SetTopPlaneDependency(self, dependency: int) -> None:
+        self.top_dependency = dependency
+
+    def SetAbsBottomElevation(self, elevation: float) -> None:
+        self.bottom = float(elevation)
+
+    def SetAbsTopElevation(self, elevation: float) -> None:
+        self.top = float(elevation)
+
+
+class FakeWallTierProperties:
+    """Stand-in for WallTierProperties; hatch 0 is Allplan's default, "none" """
+
+    def __init__(self) -> None:
+        self.Thickness = 0.0
+        self.hatch = 0
+        self.plane_references: FakePlaneReferences | None = None
+
+    def SetHatch(self, hatch_id: int) -> None:
+        self.hatch = int(hatch_id)
+
+    def GetHatch(self) -> int:
+        return self.hatch
+
+    def SetPattern(self, pattern_id: int) -> None:
+        self.pattern = int(pattern_id)
+
+    def SetFaceStyle(self, face_style_id: int) -> None:
+        self.face_style = int(face_style_id)
+
+    def SetPlaneReferences(self, references: FakePlaneReferences) -> None:
+        self.plane_references = references
+
+
+class FakeAxisProperties:
+    def __init__(self) -> None:
+        self.OnTier = 1
+        self.Position = 0
+        self.Distance = 0.0
+        self.Extension = 0
+
+
+class FakeWallProperties:
+    """Stand-in for WallProperties; tiers are 1-based like the real one"""
+
+    def __init__(self) -> None:
+        self.TierCount = 1
+        self.StartNewJoinedWallGroup = True
+        self.Axis: FakeAxisProperties | None = None
+        self.tiers: dict[int, FakeWallTierProperties] = {}
+
+    def GetWallTierProperties(self, index: int) -> FakeWallTierProperties:
+        if not 1 <= index <= self.TierCount:
+            raise IndexError(f"tier {index} out of range 1..{self.TierCount}")
+        return self.tiers.setdefault(index, FakeWallTierProperties())
+
+
+class FakeWallElement:
+    def __init__(self, properties: FakeWallProperties, axis: Any) -> None:
+        self.Properties = properties
+        self.axis = axis
+        recorder.walls.append(self)
+
+
+def install(without: tuple[str, ...] = ()) -> None:
+    """Put the fakes on sys.modules, replacing any earlier stubs
+
+    A name in `without` is installed as None, which makes its import raise
+    ImportError: that is how a host on a release lacking a module looks.
+    """
 
     for name, module in build_modules().items():
-        sys.modules[name] = module
+        sys.modules[name] = None if name in without else module  # type: ignore[assignment]

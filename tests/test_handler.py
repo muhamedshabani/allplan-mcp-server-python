@@ -223,7 +223,13 @@ def test_unknown_path_is_rejected(handler):
 def test_version_still_works(handler, allplan):
     allplan.recorder.version = "2026.1"
 
-    assert handler.handle("/get-allplan-version", {}) == {"version": "2026.1"}
+    response = handler.handle("/get-allplan-version", {})
+
+    assert response["version"] == "2026.1"
+    # the scope travels with the version so a client can tell a host that
+    # cannot build walls from one that is simply older
+    assert "AllplanArchElements" in response["api_scope"]
+    assert response["absent_modules"] == {}
 
 
 def test_object_names_still_works(handler, allplan):

@@ -66,7 +66,15 @@ MCP_PATH=/mcp
 - `get_elements`: lists elements in the current document with their UUIDs.
 - `get_element_info`: describes one element by UUID, including its bounding box.
 - `capture_viewport`: returns a PNG of the active Allplan viewport.
-- `execute_python`: executes sandboxed Python inside the running Allplan host
+- `execute_python`: executes sandboxed Python inside the running Allplan host.
+  In scope: `AllplanGeo`, `AllplanIFW`, `AllplanSettings`, `AllplanBaseElements`,
+  `AllplanBasisElements`, `AllplanBaseEle`, `coord_input`, and the architecture
+  modules `AllplanArchElements` (also `AllplanArchEle`), `AllplanElementAdapter`
+  and `AllplanReinf`. The architecture modules are what make a real wall: a
+  `WallElement` has tiers and each tier carries its own hatch, where a generic
+  solid has neither, so geometry built without them arrives unhatched. They are
+  loaded per host; `allplan_health` reports the resulting `api_scope` and any
+  `absent_modules`, and a client that needs walls should check that first.
 - `list_allplan_skills`: lists the bundled skill documents and their URIs.
 - `search_allplan_skills`: ranked full text search across the bundled skills.
 - `read_allplan_skill`: reads one skill, asset note, or sample script by URI.

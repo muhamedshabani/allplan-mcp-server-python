@@ -100,7 +100,15 @@ def execute_python_description() -> str:
         "",
         "The Allplan API modules are already in scope, no imports are allowed:",
         "AllplanGeo, AllplanIFW, AllplanSettings, AllplanBaseElements,",
-        "AllplanBasisElements, AllplanBaseEle, and coord_input.",
+        "AllplanBasisElements, AllplanBaseEle, AllplanArchElements (also as",
+        "AllplanArchEle), AllplanElementAdapter, AllplanReinf, and coord_input.",
+        "allplan_health() lists what this host actually has.",
+        "",
+        "Walls, slabs, columns and openings are AllplanArchElements objects, not",
+        "solids: a wall is WallElement(WallProperties, axis) with one or more",
+        "tiers, and each tier carries its own hatch (SetHatch), which is what",
+        "makes it readable in section. Read the geometry skill's",
+        "arch-elements note before building any of them.",
         "",
         "Set a variable named 'result' or pass result_expression to return a value.",
         "Code runs under a wall clock budget and its stdout is captured.",
@@ -169,6 +177,10 @@ def allplan_health() -> dict[str, Any]:
         "ok": True,
         "allplan_version": response.get("version"),
         "allplan_host_url": os.getenv("ALLPLAN_HOST_URL", DEFAULT_ALLPLAN_HOST_URL),
+        # Absent on a host running the bridge from before the architecture
+        # modules were added; a client should treat that as "no walls".
+        "api_scope": response.get("api_scope"),
+        "absent_modules": response.get("absent_modules"),
     }
 
 
