@@ -27,10 +27,13 @@ PNG_1X1 = base64.b64decode(
 
 MODULE_NAMES = (
     "NemAll_Python_AllplanSettings",
+    "NemAll_Python_ArchElements",
     "NemAll_Python_BaseElements",
     "NemAll_Python_BasisElements",
     "NemAll_Python_Geometry",
+    "NemAll_Python_IFW_ElementAdapter",
     "NemAll_Python_IFW_Input",
+    "NemAll_Python_Reinforcement",
 )
 
 
@@ -52,6 +55,8 @@ class Recorder:
         self.save_payload: bytes = PNG_1X1
         self.save_raises: Exception | None = None
         self.minmax_raises: bool = False
+        self.wall_properties: list[FakeWallProperties] = []
+        self.wall_elements: list[FakeWallElement] = []
         self.create_accepts_undo_kwarg: bool = True
         self.version: str = "2026.0.0"
 
@@ -106,6 +111,80 @@ class BrokenAdapter(FakeAdapter):
 
     def Is3DElement(self) -> bool:
         raise RuntimeError("not answerable")
+
+
+class FakeWallTierProperties:
+    """Records the Schraffur decisions made for one Wandschicht"""
+
+    def __init__(self, index: int) -> None:
+        self.index = index
+        self.thickness: float | None = None
+        self.hatch: int | None = None
+        self.pattern: int | None = None
+        self.face_style: int | None = None
+        self.background_color: int | None = None
+        self.common_properties: Any = None
+        self.plane_references: Any = None
+
+    def SetThickness(self, value: float) -> None:
+        self.thickness = value
+
+    def SetHatch(self, value: int) -> None:
+        self.hatch = value
+
+    def SetPattern(self, value: int) -> None:
+        self.pattern = value
+
+    def SetFaceStyle(self, value: int) -> None:
+        self.face_style = value
+
+    def SetBackgroundColor(self, value: int) -> None:
+        self.background_color = value
+
+    def SetCommonProperties(self, value: Any) -> None:
+        self.common_properties = value
+
+    def SetPlaneReferences(self, value: Any) -> None:
+        self.plane_references = value
+
+
+class FakeWallProperties:
+    def __init__(self) -> None:
+        self.tier_count = 0
+        self.tiers: dict[int, FakeWallTierProperties] = {}
+        self.axis: Any = None
+        recorder.wall_properties.append(self)
+
+    def SetTierCount(self, count: int) -> None:
+        self.tier_count = count
+
+    def SetAxis(self, axis: Any) -> None:
+        self.axis = axis
+
+    def GetWallTierProperties(self, index: int) -> FakeWallTierProperties:
+        # Allplan numbers Wandschichten from 1.
+        if index < 1:
+            raise IndexError("wall tiers are numbered from 1")
+        return self.tiers.setdefault(index, FakeWallTierProperties(index))
+
+
+class FakePlaneReferences:
+    def __init__(self, doc: Any, adapter: Any) -> None:
+        self.bottom: float | None = None
+        self.top: float | None = None
+
+    def SetAbsBottomElevation(self, value: float) -> None:
+        self.bottom = value
+
+    def SetAbsTopElevation(self, value: float) -> None:
+        self.top = value
+
+
+class FakeWallElement:
+    def __init__(self, properties: Any, axis: Any) -> None:
+        self.properties = properties
+        self.axis = axis
+        recorder.wall_elements.append(self)
 
 
 class FakePoint:
@@ -249,6 +328,29 @@ def build_modules() -> dict[str, types.ModuleType]:
         "Polyhedron3D",
         (),
         {"CreateCuboid": staticmethod(lambda length, width, height: ("cuboid", length, width, height))},
+    )
+
+    geo.Point2D = type(  # type: ignore[attr-defined]
+        "Point2D", (), {"__init__": lambda self, x, y: setattr(self, "xy", (x, y))}
+    )
+    geo.Line2D = type(  # type: ignore[attr-defined]
+        "Line2D",
+        (),
+        {"__init__": lambda self, start, end: setattr(self, "points", (start, end))},
+    )
+
+    arch = modules["NemAll_Python_ArchElements"]
+    arch.WallProperties = FakeWallProperties  # type: ignore[attr-defined]
+    arch.PlaneReferences = FakePlaneReferences  # type: ignore[attr-defined]
+    arch.WallElement = FakeWallElement  # type: ignore[attr-defined]
+    arch.AxisProperties = type("AxisProperties", (), {})  # type: ignore[attr-defined]
+    arch.WallAxisPosition = type(  # type: ignore[attr-defined]
+        "WallAxisPosition", (), {"eFree": 0}
+    )
+
+    adapter = modules["NemAll_Python_IFW_ElementAdapter"]
+    adapter.BaseElementAdapter = type(  # type: ignore[attr-defined]
+        "BaseElementAdapter", (), {}
     )
 
     ifw = modules["NemAll_Python_IFW_Input"]

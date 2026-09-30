@@ -63,6 +63,7 @@ MCP_PATH=/mcp
 - `get_all_object_names`: returns display names for elements in the current document.
 - `create_cube`: creates a cube in the current document, returns its UUID.
 - `create_box`: creates a rectangular cuboid in the current document, returns its UUID.
+- `create_wall`: creates an architectural wall with a Schraffur on each tier.
 - `get_elements`: lists elements in the current document with their UUIDs.
 - `get_element_info`: describes one element by UUID, including its bounding box.
 - `capture_viewport`: returns a PNG of the active Allplan viewport.
@@ -70,6 +71,72 @@ MCP_PATH=/mcp
 - `list_allplan_skills`: lists the bundled skill documents and their URIs.
 - `search_allplan_skills`: ranked full text search across the bundled skills.
 - `read_allplan_skill`: reads one skill, asset note, or sample script by URI.
+
+## Walls are not cuboids
+
+A `Wand` in Allplan is a tiered object. The Schraffur, Muster, Flächenstil and
+Füllfläche live on the `Wandschicht` (`WallTierProperties`), not on the wall - so
+a generic `ModelElement3D` cuboid can never carry one, and reads as blank in
+section.
+
+`create_wall` builds a real `AllplanArchElements.WallElement`:
+
+```json
+{
+  "start": [0, 0],
+  "end": [5000, 0],
+  "tiers": [
+    {"thickness": 240, "hatch": 301},
+    {"thickness": 80, "hatch": 305}
+  ],
+  "top_elevation": 2750
+}
+```
+
+**Every tier must state its surface.** A tier that omits it is rejected rather
+than drawn blank:
+
+```text
+'tiers[1]' does not say what its surface is. Set one of hatch, pattern,
+face_style, filling to a catalogue id, or "surface": "none" if the Wandschicht
+genuinely has no Schraffur. Walls without a Schraffur are unreadable in section.
+```
+
+This is deliberate. Silently defaulting to `SetHatch(0)` is what produces
+geometrically correct, professionally useless walls. `"surface": "none"` is
+available, but it has to be said out loud.
+
+The four surface kinds are mutually exclusive per tier, matching Allplan's own
+`WallInteractor`, which resets all three and then sets the active one. The tool
+returns the Schraffur it applied, so it is visible in the result rather than
+discovered after loading the drawing file.
+
+Hatch ids refer to the project's Schraffur catalogue and are not universal.
+Take them from the plan being modelled - the bundled `architecture` skill says
+so explicitly, because an invented id gives a wall that is hatched, plausible,
+and wrong.
+
+## Exposed Allplan modules
+
+Sandbox code cannot import, so `execute_python` only reaches what the bridge
+puts in scope:
+
+| Module | Alias |
+|---|---|
+| `NemAll_Python_Geometry` | `AllplanGeo` |
+| `NemAll_Python_IFW_Input` | `AllplanIFW` |
+| `NemAll_Python_AllplanSettings` | `AllplanSettings` |
+| `NemAll_Python_BaseElements` | `AllplanBaseElements`, `AllplanBaseEle` |
+| `NemAll_Python_BasisElements` | `AllplanBasisElements`, `AllplanBasisEle` |
+| `NemAll_Python_ArchElements` | `AllplanArchElements`, `AllplanArchEle` |
+| `NemAll_Python_Reinforcement` | `AllplanReinf` |
+| `NemAll_Python_IFW_ElementAdapter` | `AllplanEleAdapter` |
+
+`NemAll_Python_Utility` is deliberately absent: it carries `ShowMessageBox`, and
+a modal dialog opened from sandbox code would block the UI thread the bridge
+marshals every request onto.
+
+A module missing from an older Allplan version is skipped rather than fatal.
 
 ## Closing the loop
 
@@ -138,6 +205,7 @@ Resource URIs:
 
 - `allplan://skills`
 - `allplan://skills/api-reference`
+- `allplan://skills/architecture`
 - `allplan://skills/geometry`
 - `allplan://skills/rebar`
 - `allplan://skills/utilities`
@@ -266,6 +334,9 @@ Verified only against fakes, not a real install:
 - `DrawingService.RedrawAll(doc)`
 - `GetMinMaxBox([adapter])`
 - `BaseElementAdapter.GetModelElementUUID()`
+- `AllplanArchElements.WallProperties` / `AxisProperties` / `WallElement`
+- `WallTierProperties.SetHatch` / `SetPattern` / `SetFaceStyle` / `SetBackgroundColor`
+- `PlaneReferences(doc, BaseElementAdapter()).SetAbsBottomElevation` / `SetAbsTopElevation`
 
 These call shapes are taken from Nemetschek's own
 [PythonPartsExamples](https://github.com/NemetschekAllplan/PythonPartsExamples),

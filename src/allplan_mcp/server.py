@@ -258,6 +258,45 @@ def execute_python(
     return response
 
 
+@mcp.tool
+def create_wall(
+    start: Annotated[list[float], "Axis start point as [x, y] in mm"],
+    end: Annotated[list[float], "Axis end point as [x, y] in mm"],
+    tiers: Annotated[
+        list[dict[str, Any]],
+        "Wandschichten, outermost first. Each needs a thickness and exactly one "
+        "surface: hatch, pattern, face_style, or filling (an Allplan catalogue "
+        'id), or "surface": "none" to state it deliberately has none.',
+    ],
+    bottom_elevation: Annotated[float, "Bottom elevation in mm"] = 0.0,
+    top_elevation: Annotated[float, "Top elevation in mm"] = 2750.0,
+) -> dict[str, Any]:
+    """Create an architectural wall (Wand) with a Schraffur on each tier.
+
+    Use this for walls, not create_box. A cuboid is a generic 3D solid with no
+    Wandschichten, so it can never carry a Schraffur and reads as blank in
+    section.
+
+    Every tier must say what its surface is. A tier that omits it is rejected
+    rather than drawn blank, because a wall without a Schraffur is unreadable in
+    a Werkplan. Take the hatch id from the plan being modelled.
+
+    Example: a 240mm reinforced concrete wall with 80mm insulation.
+
+        tiers=[{"thickness": 240, "hatch": 301},
+               {"thickness": 80, "hatch": 305}]
+    """
+
+    payload: dict[str, Any] = {
+        "start": start,
+        "end": end,
+        "tiers": tiers,
+        "bottom_elevation": bottom_elevation,
+        "top_elevation": top_elevation,
+    }
+    return _allplan_client().post("/create-wall", payload)
+
+
 @mcp.tool(annotations=READ_ONLY)
 def get_elements(
     limit: Annotated[int, "Maximum number of elements to return"] = 500,

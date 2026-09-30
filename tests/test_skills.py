@@ -11,7 +11,21 @@ def skills() -> SkillsManager:
 
 
 def test_bundled_skills_are_discovered(skills: SkillsManager) -> None:
-    assert set(skills.entries) == {"api-reference", "geometry", "rebar", "utilities"}
+    assert set(skills.entries) == {
+        "api-reference",
+        "architecture",
+        "geometry",
+        "rebar",
+        "utilities",
+    }
+
+
+def test_the_architecture_skill_is_searchable_for_walls(skills: SkillsManager) -> None:
+    # The model reaches for create_box unless something tells it walls are
+    # tiered objects. This is that something.
+    hits = skills.search("wall Schraffur tier", limit=3)
+
+    assert any(hit["uri"].startswith("allplan://skills/architecture") for hit in hits)
 
 
 def test_every_skill_has_a_description(skills: SkillsManager) -> None:
